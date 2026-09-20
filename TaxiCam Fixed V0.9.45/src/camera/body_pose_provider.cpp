@@ -1022,6 +1022,19 @@ bool calibrate_body_pose(const Vector3& position, float fov, std::uint64_t now, 
     *report = local;
   return accepted;
 }
+PublicCameraSample get_public_camera_sample() noexcept {
+  PublicCameraSample out{};
+  AcquireSRWLockShared(&state.lock);
+  out.valid = state.camera_ms != 0 && std::isfinite(state.camera.fov);
+  out.sample_ms = state.camera_ms;
+  std::memcpy(out.position, state.camera.position, sizeof(out.position));
+  std::memcpy(out.target, state.camera.target, sizeof(out.target));
+  std::memcpy(out.pbh, state.camera.pbh, sizeof(out.pbh));
+  out.fov = state.camera.fov;
+  ReleaseSRWLockShared(&state.lock);
+  return out;
+}
+
 BodyPoseSnapshot sample_body_pose(std::uint64_t now) noexcept {
   BodyPoseSnapshot out;
   AcquireSRWLockShared(&state.lock);

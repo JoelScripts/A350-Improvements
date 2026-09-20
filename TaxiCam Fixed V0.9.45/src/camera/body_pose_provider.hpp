@@ -5,6 +5,14 @@
 #include "aircraft_mounts.hpp"
 #include "taxi_button_command.hpp"
 namespace taxi_camera::native_camera {
+struct PublicCameraSample {
+  bool valid = false;
+  std::uint64_t sample_ms = 0;
+  double position[3]{};
+  double target[3]{};
+  float pbh[3]{};
+  double fov = 0;
+};
 struct BodyPoseSnapshot {
   bool valid = false;
   bool calibration_required = false;  // Fresh public camera+aircraft ready, no calibration yet.
@@ -106,6 +114,8 @@ bool public_camera_matches(const Vector3& private_camera_ecef,
                            std::uint64_t now_ms,
                            CameraMatchReport* report = nullptr) noexcept;
 BodyPoseSnapshot sample_body_pose(std::uint64_t now_ms) noexcept;
+// Cache-only public camera state from SimConnect. This does not change the simulator camera.
+PublicCameraSample get_public_camera_sample() noexcept;
 // Receipt timing only, not a claim of simulation timestamp or prediction.
 // Counter is monotonic across worker restarts; no additional simulator reads.
 BodyTelemetryTiming get_body_telemetry_timing() noexcept;

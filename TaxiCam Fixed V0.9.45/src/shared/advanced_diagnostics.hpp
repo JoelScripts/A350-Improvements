@@ -148,6 +148,15 @@ inline void write_readable(std::string_view utc, std::string_view severity, std:
   } catch (...) {}
 }
 
+inline void overwrite_text_file(const std::wstring& path, std::string_view text) noexcept {
+  HANDLE handle = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (handle == INVALID_HANDLE_VALUE) return;
+  DWORD written = 0;
+  if (!text.empty()) WriteFile(handle, text.data(), static_cast<DWORD>(std::min<std::size_t>(text.size(), 0xFFFFFFFFu)), &written, nullptr);
+  CloseHandle(handle);
+}
+
 inline void write_summary(const Snapshot& snap, std::string_view reason) noexcept {
   try {
     char text[8192]{};
@@ -187,7 +196,7 @@ inline void write_summary(const Snapshot& snap, std::string_view reason) noexcep
       (unsigned long long)snap.hook_failures, (unsigned long long)warnings, (unsigned long long)errors,
       (unsigned long long)recoveries, (unsigned long long)snap.heartbeat, timestamp_utc().c_str(),
       (int)reason.size(), reason.data());
-    append_rotating_log(summary_path, text, 2ull * 1024ull * 1024ull);
+    overwrite_text_file(summary_path, text);
   } catch (...) {}
 }
 
@@ -217,7 +226,7 @@ inline bool initialize(std::string_view component) noexcept {
     write_readable(timestamp_utc(), "info", "diagnostics", component, "diagnostics.initialized", detail);
     Snapshot empty{};
     write_summary(empty, "startup");
-    append_rotating_log(state_path, "Taxi Cam advanced diagnostic state\r\nState file initialized.\r\n", StateLogBytes);
+    overwrite_text_file(state_path, "Taxi Cam advanced diagnostic state\r\nState file initialized.\r\n");
     return true;
   } catch (...) { return false; }
 }
@@ -262,7 +271,7 @@ inline void state_snapshot(const Status& status,std::string_view reason="periodi
       (unsigned long long)status.heartbeat,status.graphics_ready,status.scene_ready,status.taxi_mask,(unsigned long long)status.left_id,(unsigned long long)status.right_id,
       (unsigned long long)status.captures,(unsigned long long)status.composed,(unsigned long long)status.stamps,(unsigned long long)status.hook_failures,status.candidate_count,
       status.speed,status.probe_cpu_ms,status.probe_max_ms,status.aircraft_type,status.aircraft_path,status.message);
-    append_rotating_log(state_path,text,StateLogBytes);
+    overwrite_text_file(state_path, text);
     Snapshot snap{}; snapshot(status, snap); write_summary(snap, reason);
   } catch (...) {}
 }

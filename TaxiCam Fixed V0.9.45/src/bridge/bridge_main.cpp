@@ -15,6 +15,7 @@
 #include "../shared/rotating_log.hpp"
 #include "../shared/scene_demand.hpp"
 #include "camera_status.hpp"
+#include "camera_transition_guard.hpp"
 #include "crash_evidence.hpp"
 #include "d3d12_bridge.hpp"
 #include "native_hooks.hpp"
@@ -167,6 +168,7 @@ DWORD run_impl() {
   bool logged = false, last_connected = false, last_requested = false;
   std::uint64_t last_stop_sequence{};
   std::array<std::array<double, 6>, 2> applied_mounts{};
+  standalone::CameraTransitionGuard camera_transition_guard;
   for (;;) {
     control.refresh(mailbox);
     const auto now = GetTickCount64();
@@ -365,6 +367,35 @@ DWORD run_impl() {
             : 0;
     const bool test_scene =
         connected && session_settings && session.ready && settings.enabled && aircraft_matches && settings.scene_test && !cutoff.inhibited;
+    const bool taxi_runtime_requested = mask || test_scene || prewarm.active();
+    const bool transition_was_active = camera_transition_guard.active();
+    if (taxi_runtime_requested) {
+      const auto public_camera = native_camera::get_public_camera_sample();
+      camera_transition_guard.observe(public_camera, now);
+      if (!transition_was_active && camera_transition_guard.active()) {
+        const auto& d = camera_transition_guard.last_delta();
+        char detail[512];
+        std::snprintf(detail, sizeof(detail),
+                      "External camera transition detected; Taxi Cam rendering paused. position_delta=%.6f target_delta=%.6f pbh_delta=%.6f fov_delta=%.6f",
+                      d.position, d.target, d.pbh, d.fov);
+        TAXI_LOG_STATUS(status, detail);
+        win::advanced_diagnostics::event("camera.external_transition_begin", detail, "camera", __FILE__, __LINE__, __func__, &status);
+      } else if (transition_was_active && !camera_transition_guard.active()) {
+        const char* reason = camera_transition_guard.timed_out() ? "timeout" : "stable";
+        char detail[256];
+        std::snprintf(detail, sizeof(detail), "External camera transition ended; Taxi Cam rendering resumed. reason=%s", reason);
+        TAXI_LOG_STATUS(status, detail);
+        win::advanced_diagnostics::event(camera_transition_guard.timed_out() ? "camera.external_transition_timeout"
+                                                                             : "camera.external_transition_end",
+                                         detail, "camera", __FILE__, __LINE__, __func__, &status);
+      }
+    } else if (camera_transition_guard.active()) {
+      camera_transition_guard.reset();
+      win::advanced_diagnostics::event("camera.external_transition_cancelled",
+                                       "External camera transition guard reset because Taxi Cam is no longer requested",
+                                       "camera", __FILE__, __LINE__, __func__, &status);
+    }
+    const bool camera_transition = camera_transition_guard.active();
     const auto intent_observed_ms = GetTickCount64();
     if (!mask && !test_scene && !prewarm.active())
       failed = false;
@@ -436,8 +467,11 @@ DWORD run_impl() {
                                      : 0;
     // Warmup and scene-only diagnostics need capture observation without PFD
     // writes. Settled OFF may bypass PFD state while lifetime tracking remains.
-    win::set_graphics_observation_demand(!demand.suspend || calibration != 0);
-    win::set_target_mask(active);
+    // A public external camera jump is treated as a short graphics transition.
+    // Keep owned Taxi Cam views alive, but close the render/PFD gates until the
+    // public camera stabilizes. This is deliberately bounded by the guard.
+    win::set_graphics_observation_demand((!demand.suspend || calibration != 0) && !camera_transition);
+    win::set_target_mask(camera_transition ? 0u : active);
     win::set_calibration(calibration, settings.calibration_budget);
     const win::OwnedWork owned;
     if (connected && (rate != settings.camera_rate || feeds != (settings.single_camera ? 1u : 2u))) {
@@ -471,7 +505,7 @@ DWORD run_impl() {
     // pairs or its bounded budget. Otherwise OFF, cutoff, pause and heartbeat
     // loss close the render gates immediately.
     // Keep the owned pair and ordered source-state evidence for the next ON.
-    native_camera::suspend_scene_rendering(demand.suspend);
+    native_camera::suspend_scene_rendering(demand.suspend || camera_transition);
     auto composition = profiles::find(applied_profile ? applied_profile : settings.profile)->composition;
     composition.speed_color = settings.speed_color;
     composition.guide_color = settings.guide_color;
@@ -607,7 +641,7 @@ DWORD run_impl() {
     status.graphics_ready = graphics.ready;
     status.hook_failures = graphics.hook_failures;
     status.scene_ready = scene.ready[0] && scene.ready[1];
-    status.taxi_mask = active;
+    status.taxi_mask = camera_transition ? 0u : active;
     status.speed_inhibited = cutoff.inhibited;
     status.left_id = targets[0];
     status.right_id = targets[1];
@@ -678,6 +712,7 @@ DWORD run_impl() {
         !connected || !settings.enabled ? "Disconnected. Use Connect in the Windows companion."
         : !aircraft_matches             ? aircraft_message
         : cutoff.inhibited ? (manual_only ? "Above 60 knots: camera displays inhibited." : "Above 60 knots: TAXI buttons commanded off.")
+        : camera_transition                           ? "External camera transition detected. Taxi Cam rendering is temporarily paused."
         : failed                                         ? scene.message.c_str()
         : scene.pose_waiting && requested               ? scene.message.c_str()
         : scene.view_waiting && scene.stop_reason == native_camera::SceneStopReason::resolution_changed ? scene.message.c_str()
@@ -704,7 +739,7 @@ DWORD run_impl() {
                          status.taxi_mask != last_logged.taxi_mask || status.left_id != last_logged.left_id ||
                          status.right_id != last_logged.right_id || status.speed_inhibited != last_logged.speed_inhibited ||
                          scene.stop_sequence != last_stop_sequence || output.output != last_output ||
-                         scene.view_wait_count != last_view_wait_count;
+                         scene.view_wait_count != last_view_wait_count || camera_transition != transition_was_active;
     loop_max_ms = std::max(loop_max_ms, GetTickCount64() - now);
     if (changed || now >= next_log) {
       if (!logged || status.active_profile != last_logged.active_profile || status.detected_profile != last_logged.detected_profile ||

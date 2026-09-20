@@ -441,26 +441,50 @@ void open_github_issue(int index) {
 }
 
 void open_diagnostic_file(const std::wstring& path, const wchar_t* label) {
-  if (path.empty()) {
-    win::advanced_diagnostics::initialize("companion");
-  }
+  // Re-initialize defensively so the companion always has the real diagnostics
+  // directory/path set before a button is used, even if the bridge has not
+  // created any diagnostics files yet.
+  win::advanced_diagnostics::initialize("companion");
   const auto& target = path.empty() ? win::advanced_diagnostics::summary_path : path;
   if (target.empty()) {
-    notice = std::wstring(L"Could not locate ") + label + L".";
+    notice = std::wstring(L"Could not locate ") + label + L". Diagnostics path is empty.";
     InvalidateRect(window, nullptr, FALSE);
     return;
   }
-  const DWORD attributes = GetFileAttributesW(target.c_str());
+
+  DWORD attributes = GetFileAttributesW(target.c_str());
   if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
-    notice = std::wstring(L"The ") + label + L" is not available yet. Open the log folder instead.";
+    // The diagnostics bootstrap normally creates these files. If an older
+    // installation has not done so yet, force a fresh state snapshot where
+    // possible and check once more before reporting failure.
+    win::Status sample{};
+    win::advanced_diagnostics::state_snapshot(sample, "companion_file_open");
+    attributes = GetFileAttributesW(target.c_str());
+  }
+
+  if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    notice = std::wstring(L"The ") + label + L" does not exist yet. Log folder: " +
+             win::advanced_diagnostics::directory;
     InvalidateRect(window, nullptr, FALSE);
     return;
   }
-  const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
-  if (result <= 32)
-    notice = std::wstring(L"Could not open ") + label + L".";
-  else
+
+  // First try the user's normal file association. If Windows has no
+  // association (common for .jsonl), fall back to Explorer selecting the
+  // exact file so the button always produces a visible result.
+  auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+  if (result <= 32) {
+    std::wstring args = L"/select,\"" + target + L"\"";
+    result = reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL));
+  }
+
+  if (result <= 32) {
+    notice = std::wstring(L"Could not open ") + label + L". Try Open log folder.";
+    win::advanced_diagnostics::event("diagnostics.file_open_failed", std::string("Failed to open diagnostic file"), "companion");
+  } else {
     notice = std::wstring(L"Opened ") + label + L".";
+    win::advanced_diagnostics::event("diagnostics.file_opened", std::string("Opened diagnostic file"), "companion");
+  }
   InvalidateRect(window, nullptr, FALSE);
 }
 
@@ -2011,7 +2035,20 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
         return 0;
       }
       if (id == 510) {
-        ShellExecuteW(hwnd, L"open", win::settings_directory().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        win::advanced_diagnostics::initialize("companion");
+        const auto& folder = win::advanced_diagnostics::directory;
+        INT_PTR result = 0;
+        if (!folder.empty()) {
+          result = reinterpret_cast<INT_PTR>(ShellExecuteW(hwnd, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+        }
+        if (result <= 32) {
+          notice = L"Could not open the Taxi Cam diagnostics folder.";
+          win::advanced_diagnostics::event("diagnostics.folder_open_failed", "Failed to open the diagnostics folder", "companion");
+        } else {
+          notice = L"Opened the Taxi Cam diagnostics folder.";
+          win::advanced_diagnostics::event("diagnostics.folder_opened", "Opened the diagnostics folder", "companion");
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
       }
       if (id == 515) {
