@@ -17,6 +17,41 @@ body:
 
         **Please search the existing issues before submitting a new report.**
 
+        ---
+
+        ## 📋 IMPORTANT — Diagnostic log required
+
+        **Please include your TaxiCam diagnostic log with this report.**
+
+        The easiest way to find it is:
+
+        1. Open **TaxiCam-Fixed**.
+        2. Open **Diagnostics**.
+        3. Click **Open log folder**.
+        4. Attach the relevant log file to the **TaxiCam diagnostic information** box below by dragging and dropping it there.
+
+        You can also open the folder manually by pasting this into Windows File Explorer:
+
+        `%LOCALAPPDATA%\Taxi Cam`
+
+        Depending on the TaxiCam-Fixed build, you may also see:
+
+        `%LOCALAPPDATA%\TaxiCam-Fixed`
+
+        Look for files such as:
+
+        - `diagnostics-summary.txt` — **start here; easiest file to read**
+        - `advanced-diagnostics.log` — human-readable detailed event log
+        - `advanced-diagnostics.jsonl` — detailed machine-readable diagnostics
+        - `diagnostics.log` — diagnostic session log
+        - `bridge.log` — MSFS graphics bridge log
+
+        **If TaxiCam-Fixed crashed or MSFS froze, please attach the log covering the time of the incident.**
+
+        If you cannot find the log, say so in the diagnostic field rather than submitting an empty report.
+
+        **Please remove/redact any personal information before attaching logs.**
+
   - type: checkboxes
     id: existing-issues
     attributes:
@@ -244,21 +279,54 @@ body:
   - type: textarea
     id: diagnostics
     attributes:
-      label: TaxiCam diagnostic information
-      description: Paste the relevant section of your TaxiCam-Fixed diagnostics log here if available. Do not include personal or sensitive information.
+      label: 📋 TaxiCam diagnostic log — REQUIRED
+      description: |
+        Please attach your diagnostic log here by dragging and dropping the file into this box.
+
+        Find it in TaxiCam-Fixed → Diagnostics → Open log folder.
+
+        The folder is normally:
+        %LOCALAPPDATA%\Taxi Cam
+
+        Depending on the build, also check:
+        %LOCALAPPDATA%\TaxiCam-Fixed
+
+        Prefer attaching diagnostics-summary.txt first. If available, also attach advanced-diagnostics.log, advanced-diagnostics.jsonl, diagnostics.log and/or bridge.log.
+
+        For crashes or freezes, attach the log from the same session in which the problem occurred.
+
+        If you genuinely cannot find a log, write "LOG NOT FOUND" and explain what you checked.
       placeholder: |
-        Paste relevant diagnostics here.
+        Drag and drop the diagnostic log file here.
 
-        If you have a diagnostics.log file, you can also attach it below.
+        Or paste the relevant section of the log below.
+
+        IMPORTANT:
+        - Include the time the problem occurred if possible.
+        - Do not remove the surrounding error/warning/recovery entries.
+        - Redact personal information if any is present.
       render: text
+    validations:
+      required: true
 
-  - type: upload
+  - type: checkboxes
+    id: diagnostic-check
+    attributes:
+      label: Diagnostic log confirmation
+      description: This helps make sure the report contains the information needed for investigation.
+      options:
+        - label: I have attached or pasted the TaxiCam diagnostic information, or I have explained why the log could not be provided.
+          required: true
+    validations:
+      required: true
+
+  - type: textarea
     id: attachments
     attributes:
-      label: Screenshots, videos, logs, or other files
-      description: Drag and drop screenshots, short videos, diagnostics logs, or other relevant files here.
-    validations:
-      required: false
+      label: Screenshots, videos, crash evidence, or other files
+      description: Drag and drop additional screenshots, videos, crash evidence files, or other relevant files here.
+      placeholder: |
+        Drag and drop additional files here, if available.
 
   - type: textarea
     id: additional-information
