@@ -1,135 +1,349 @@
-# Taxi Cam
+name: 🐛 TaxiCam-Fixed Bug Report
+description: Report a problem with TaxiCam-Fixed so it can be investigated.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
 
-Nose-wheel and tail cameras for Microsoft Flight Simulator 2024. Use the aircraft's **TAXI** button or a keyboard shortcut to see both views on the upper part of its Primary Flight Display (PFD).
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🐛 TaxiCam-Fixed Bug Report
 
-This was built out of curiosity - what would it take to actually get this to work.. 
-Looking at what the community was doing with reshade and DLSSG, it got me wondering if I could use the same patterns here to transform the output with some MSFS camera views.
-Turns out it was and ran reasonably well on my setup (9800x3d and 5070Ti). 
-Its not universally compatible with every setup out there so be very aware that it might not work for you. 
-If you are up for reporting issues then I can try and help out.
+        Thanks for taking the time to report a problem.
 
-## Compatibility
+        Please provide as much information as possible. The more detail you provide, the easier it is to reproduce and investigate the issue.
 
-- **DLSSG and Reshade mods** - There are a vast number of different configs out there for reshade and unsupported DLSSG mods - if you raise an issue I will endeavour to investigate and see what can be done. A best effort has been made to change the archetecture to move the processing downstream of reshade to avoid conflicts but some may remain due to other mods potentially using the same patterns to transform the output.
-- **Sim Update 7** - Make sure you have the stable version of MSFS (SU6 - 1.8.16.0) - SU7 is not supported currently.
+        **Please search the existing issues before submitting a new report.**
 
-## Important notice
+        ---
 
-Taxi Cam is **experimental** and uses an unsupported simulator integration. It is not endorsed by Microsoft or Asobo. Simulator or aircraft updates may cause problems, including crashes. **Use at your own risk.**
+        ## 📋 IMPORTANT — Diagnostic log required
 
-If you find Taxi Cam useful, please consider donating.
+        **Please include your TaxiCam diagnostic log with this report.**
 
-[![Donate with PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://www.paypal.com/donate/?hosted_button_id=EPVELD44P6NXW)
+        The easiest way to find it is:
 
-## Supported aircraft
+        1. Open **TaxiCam-Fixed**.
+        2. Open **Diagnostics**.
+        3. Click **Open log folder**.
+        4. Attach the relevant log file to the **TaxiCam diagnostic information** box below by dragging and dropping it there.
 
-- **FlyByWire A380X**
-- **iniBuilds A350-900**, including **ULR**
-- **iniBuilds A350-1000**
-- **iniBuilds A380** — use keyboard shortcuts or manual previews because its TAXI buttons are marked INOP.
+        You can also open the folder manually by pasting this into Windows File Explorer:
 
-## Installation
+        `%LOCALAPPDATA%\Taxi Cam`
 
-For **Windows 10/11 (64-bit)** and **MSFS 2024**, with one of the aircraft above. Keep Windows and your graphics driver up to date. Setup checks required components and explains if anything is missing. [Detailed graphics requirements](docs/runtime-reference.md#graphics-requirements).
+        Depending on the TaxiCam-Fixed build, you may also see:
 
-1. Download the **Windows x64 setup EXE** from [the latest release](https://github.com/rthoms334/taxi-cam/releases/latest).
-2. Close MSFS and exit Taxi Cam if it is already running.
-3. Run setup, confirm your simulator folder, and choose **Configure automatic startup with MSFS** or **Launch manually**. Setup remembers this choice on updates. Manual launch skips startup configuration and leaves any existing startup entry unchanged.
+        `%LOCALAPPDATA%\TaxiCam-Fixed`
 
-**Keep existing settings** is selected by default. Leave it checked to preserve camera profiles, calibration, reference guides and keyboard shortcuts. This version still writes camera frame rate **10** into existing settings; other saved values stay in place. Clear the checkbox only if you want to start with the bundled defaults. Setup restores your previous settings if installation fails.
+        Look for files such as:
 
-If Setup cannot configure automatic startup and can verify the startup file is unchanged, installation completes with a notice explaining how to launch Taxi Cam from the Start menu. Details are saved in `setup-diagnostics.log` in the installation folder. You can rerun Setup to retry automatic startup. See [Automatic startup](docs/runtime-reference.md#automatic-startup) for Steam and Microsoft Store startup file locations and selection behavior.
+        - `diagnostics-summary.txt` — **start here; easiest file to read**
+        - `advanced-diagnostics.log` — human-readable detailed event log
+        - `advanced-diagnostics.jsonl` — detailed machine-readable diagnostics
+        - `diagnostics.log` — diagnostic session log
+        - `bridge.log` — MSFS graphics bridge log
 
-For manual launch, start Taxi Cam from the Start menu (or tray) while MSFS is running. You can leave **Auto-connect** on, or turn it off and use **Connect** at the main menu or in a loaded flight. Connect enables camera operation and changes to **Disconnect**, which stops camera output and temporary requests. Choose Connect again to resume or retry an attachment. Disconnect keeps your Auto-connect preference but suspends automatic retries until you choose Connect again. These controls do not stop MSFS or overwrite calibration. After an in-flight connection, wait for the next cockpit draws while the bridge learns existing display bindings. Recovery remains unresolved for already-powered A350 displays whose old views cannot be associated with those draws; a populated texture list alone does not guarantee output. See [startup timing](docs/reshade-compatibility.md#startup-timing).
+        **If TaxiCam-Fixed crashed or MSFS froze, please attach the log covering the time of the incident.**
 
-On its first launch, **Settings** opens so you can explore the controls. Close the window or select **Hide to tray** to keep the app running in the system tray. Later automatic starts stay in the tray; opening Taxi Cam from the Windows Start menu shows Settings again. The first-launch choice is remembered across updates.
+        If you cannot find the log, say so in the diagnostic field rather than submitting an empty report.
 
-## Using Taxi Cam
+        **Please remove/redact any personal information before attaching logs.**
 
-1. Load a supported aircraft. Leave **Auto aircraft** enabled in **Overview** to select the matching settings automatically.
-2. Allow a few seconds for the cameras to become ready.
-3. Press the left or right EFIS **TAXI** button to show the cameras on that side's PFD. On the iniBuilds A380, use **Ctrl + Shift + B** to turn both displays on. Repeat the control to turn them off.
+  - type: checkboxes
+    id: existing-issues
+    attributes:
+      label: Existing issues
+      description: Please confirm that you have searched the existing issues for the same or a very similar problem.
+      options:
+        - label: I have searched the existing issues and could not find the same problem.
+          required: true
+    validations:
+      required: true
 
-The cameras switch off above **60 knots**. If a view appears on the wrong display, use **PFD routing** in Settings to correct it.
+  - type: dropdown
+    id: problem-type
+    attributes:
+      label: What type of problem are you reporting?
+      description: Select the option that best describes what happened.
+      options:
+        - MSFS freezes
+        - MSFS crashes
+        - PFD is blank or not displaying Taxi Cam
+        - Nose camera does not work
+        - Tail camera does not work
+        - Camera transition / camera view problem
+        - TAXI button or activation problem
+        - Performance / FPS problem
+        - Visual corruption / graphical problem
+        - Startup / initialization problem
+        - Other
+      default: 0
+    validations:
+      required: true
 
-Keyboard controls work while Taxi Cam is hidden: **Ctrl + Shift + L** toggles the left display, **Ctrl + Shift + R** the right and **Ctrl + Shift + B** both. In **Settings → Overview → Flight-deck control**, select **Keyboard shortcuts…** to configure or disable them. On aircraft with working TAXI buttons, shortcuts also update the cockpit button state and preserve the **TAXI buttons** setting. See [Keyboard controls](docs/keyboard-shortcuts.md) for details.
+  - type: dropdown
+    id: aircraft
+    attributes:
+      label: Aircraft
+      description: Which aircraft were you using when the problem occurred?
+      options:
+        - iniBuilds A350-1000
+        - iniBuilds A350-900
+        - iniBuilds A350-900 ULR
+        - Other
+      default: 0
+    validations:
+      required: true
 
-## Adjusting the views
+  - type: dropdown
+    id: when-occurred
+    attributes:
+      label: When did the problem occur?
+      description: Select the point in the Taxi Cam session when the problem happened.
+      options:
+        - During TaxiCam startup
+        - When pressing TAXI
+        - When enabling the nose camera
+        - When enabling the tail camera
+        - When changing the MSFS camera view
+        - When using ChasePlane
+        - When opening the MSFS toolbar
+        - When loading or reloading the flight
+        - After landing
+        - During normal TaxiCam operation
+        - Other
+      default: 0
+    validations:
+      required: true
 
-Right-click the Taxi Cam tray icon and open **Settings**. Adjustments are saved separately for each aircraft profile.
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does the problem happen?
+      options:
+        - Every time
+        - Most of the time
+        - Sometimes
+        - Rarely
+        - Happened once
+        - Not sure
+      default: 0
+    validations:
+      required: true
 
-### Camera views
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Can you reproduce the problem?
+      options:
+        - Yes, every time
+        - Yes, sometimes
+        - No
+        - Not sure
+      default: 0
+    validations:
+      required: true
 
-With the aircraft parked and the cameras on, open **Camera views**. Adjust the nose and tail cameras' position, angle and **Lens** (zoom). A smaller lens value gives a closer view; a larger value shows more of the surroundings.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe exactly what you saw or experienced.
+      placeholder: |
+        Example:
+        MSFS freezes when I press my ChasePlane camera shortcut while TaxiCam is active.
+      render: text
+    validations:
+      required: true
 
-Choose **Save changes** to apply and keep your adjustments. **Reset camera mounts** restores the profile's default views; save afterwards to keep the reset.
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: Describe what you expected TaxiCam or MSFS to do instead.
+      placeholder: |
+        Example:
+        The ChasePlane camera should change normally and TaxiCam should continue running.
+    validations:
+      required: true
 
-### Reference guides
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Please list the steps that cause the problem.
+      placeholder: |
+        1. Start MSFS 2024
+        2. Load the iniBuilds A350
+        3. Start TaxiCam-Fixed
+        4. Press TAXI
+        5. Change camera view
+        6. MSFS freezes
+    validations:
+      required: true
 
-Set your camera views first, then open **Reference guides** to position the nose markers and tail brackets. **X** moves them sideways and **Y** moves them up or down; the right side mirrors the left.
+  - type: checkboxes
+    id: camera-affected
+    attributes:
+      label: Camera / PFD affected
+      description: Select everything that applies.
+      options:
+        - label: Nose camera
+        - label: Tail camera
+        - label: Left PFD
+        - label: Right PFD
+        - label: Both PFDs
+        - label: MSFS external camera
+        - label: ChasePlane camera
 
-Choose **Apply live** to preview the positions, then **Save changes** to keep them. To restore the defaults, choose **Reset guide positions** and save. The guides may need realigning if you change the camera view.
+  - type: checkboxes
+    id: external-software
+    attributes:
+      label: Other software in use
+      description: Select everything that was active when the problem occurred.
+      options:
+        - label: ChasePlane
+        - label: ReShade
+        - label: NVIDIA DLSS
+        - label: Frame Generation
+        - label: Other camera software
+        - label: Other graphics / overlay software
+        - label: None
 
-### Brightness and smoothness
+  - type: input
+    id: taxicam-version
+    attributes:
+      label: TaxiCam-Fixed version
+      description: Enter the version shown by TaxiCam-Fixed.
+      placeholder: "Example: 0.9.30"
+    validations:
+      required: true
 
-On **Display**, adjust brightness, automatic night exposure and ground-speed text colour. **Camera frame rate** accepts **5–60** (minimum **5**), with a default of **10**. This version's installer writes **10** into existing settings so a saved 15 becomes 10; later changes you make are kept. Higher values update the cameras more often and increase simulator work. The achieved rate also depends on simulator performance. Choose **Save changes** when finished.
+  - type: input
+    id: msfs-version
+    attributes:
+      label: Microsoft Flight Simulator 2024 version
+      description: Enter your MSFS 2024 version if known.
+      placeholder: "Example: 1.8.16.0"
+    validations:
+      required: true
 
-On **Reference guides**, **Marking colour** changes the nose squares and tail brackets independently of GS. A350 and A380 both default to magenta square nose markers. Choose **Save changes** to retain the colour for the selected aircraft profile.
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Enter your Windows version if known.
+      placeholder: "Example: Windows 11 25H2"
 
-All aircraft start with **−11.5 EV** daytime exposure, **Auto exposure** enabled, **8 EV** maximum night boost and the same green ground-speed colour. This update sets existing profiles' maximum night boost to **8** once, when each profile is first loaded. Other saved preferences are preserved, including the Auto exposure choice. Later changes to the night boost remain saved normally. GS displays whole knots by dropping the fractional part: 12.9 knots displays as 12.
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: Enter your graphics card model.
+      placeholder: "Example: NVIDIA GeForce RTX 4090"
 
-### Identifying the PFDs
+  - type: input
+    id: driver
+    attributes:
+      label: GPU driver version
+      description: Enter your NVIDIA/AMD/Intel graphics driver version if known.
+      placeholder: "Example: NVIDIA 581.xx"
 
-If automatic detection stays at a waiting message or selects the wrong screens, open **PFD routing**:
+  - type: dropdown
+    id: graphics-api
+    attributes:
+      label: Graphics API
+      description: Which graphics API is MSFS using?
+      options:
+        - D3D12
+        - D3D11
+        - Not sure
+      default: 0
+    validations:
+      required: true
 
-1. Select **Refresh textures**, then choose a candidate for the left or right display.
-2. Use **Calibrate left** or **Calibrate right** to identify that screen with an animated pattern. Repeat with another candidate if the pattern appears on the wrong screen. Use **Swap left / right** if the two sides are reversed.
-3. Turn both calibration controls off, then activate the cameras with the TAXI buttons or shortcuts. On aircraft with working TAXI buttons, turning the last calibration control off automatically restores button control. The iniBuilds A380 stays in manual control.
+  - type: textarea
+    id: recent-changes
+    attributes:
+      label: Did anything change before the problem started?
+      description: Mention recent TaxiCam, MSFS, aircraft, Windows, GPU driver, ChasePlane, ReShade, DLSS, or Frame Generation updates if applicable.
+      placeholder: |
+        Example:
+        The problem started after updating MSFS / ChasePlane / TaxiCam.
+    validations:
+      required: false
 
-Assignments apply immediately and belong to the current flight; texture IDs can change after a reload. **Left preview** and **Right preview** are also available, but these controls turn off **Overview → TAXI buttons**. Re-enable that setting to return to cockpit-button control. Keyboard shortcuts preserve the setting.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 📋 TaxiCam diagnostic log — REQUIRED
+      description: |
+        Please attach your diagnostic log here by dragging and dropping the file into this box.
 
-## Known issues and limitations
+        Find it in TaxiCam-Fixed → Diagnostics → Open log folder.
 
-- **Night lighting:** Runway and taxiway lights can look very faint or be difficult to see. Improving their visibility is on the roadmap.
-- **DLSS camera movement:** Slight aircraft movement can remain in the A350 lower view while taxiing with DLSS. TAA does not exhibit this movement. If the cameras do not recover after changing graphics settings and Taxi Cam asks for a restart, restart MSFS.
-- **Frame-rate impact:** Extra camera views cost performance. Taxi Cam is designed to keep this as low as possible, but you may notice a drop in FPS. Try a lower camera frame rate if needed.
+        The folder is normally:
+        %LOCALAPPDATA%\Taxi Cam
 
-Please report unexpected behaviour using **Report a bug**.
+        Depending on the build, also check:
+        %LOCALAPPDATA%\TaxiCam-Fixed
 
-## Updates and removal
+        Prefer attaching diagnostics-summary.txt first. If available, also attach advanced-diagnostics.log, advanced-diagnostics.jsonl, diagnostics.log and/or bridge.log.
 
-Use **Check for updates** in the tray menu, or download the latest installer from [Releases](https://github.com/rthoms334/taxi-cam/releases/latest). Close MSFS and Taxi Cam before installing an update. Your saved settings are kept by default; setup offers an explicit reset if you want to start again.
+        For crashes or freezes, attach the log from the same session in which the problem occurred.
 
-Existing shortcut choices are kept too. To adopt **Ctrl + Shift + L / R / B**, open **Overview → Flight-deck control → Keyboard shortcuts…**, select **Reset shortcuts**, then **Save changes** in that editor.
+        If you genuinely cannot find a log, write "LOG NOT FOUND" and explain what you checked.
+      placeholder: |
+        Drag and drop the diagnostic log file here.
 
-Click the version number at the bottom of the settings sidebar to open the Taxi Cam GitHub repository in your browser.
+        Or paste the relevant section of the log below.
 
-To remove the mod, close both applications and uninstall **Taxi Cam** from Windows Installed apps. **Keep settings** is the default choice so a later installation can reuse them. Choose **Remove saved settings** to clear camera profiles, calibration, guides, keyboard shortcuts and first-launch preferences instead. This also clears known profiles retained under the former **380 Taxi Cam** name, preventing them from being imported again. Logs and unrelated files are kept.
+        IMPORTANT:
+        - Include the time the problem occurred if possible.
+        - Do not remove the surrounding error/warning/recovery entries.
+        - Redact personal information if any is present.
+      render: text
+    validations:
+      required: true
 
-## Reporting a problem
+  - type: checkboxes
+    id: diagnostic-check
+    attributes:
+      label: Diagnostic log confirmation
+      description: This helps make sure the report contains the information needed for investigation.
+      options:
+        - label: I have attached or pasted the TaxiCam diagnostic information, or I have explained why the log could not be provided.
+          required: true
+    validations:
+      required: true
 
-Click the app's **bug icon** or choose **Report a bug** in the tray menu. Describe what happened and follow the form's prompts for logs and screenshots. **Diagnostics → Open log folder** takes you to the files you may need.
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Screenshots, videos, crash evidence, or other files
+      description: Drag and drop additional screenshots, videos, crash evidence files, or other relevant files here.
+      placeholder: |
+        Drag and drop additional files here, if available.
 
-You can also [open a bug report on GitHub](https://github.com/rthoms334/taxi-cam/issues/new?template=bug_report.yml).
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional information
+      description: Anything else that may help reproduce or investigate the problem.
+      placeholder: |
+        Add anything else that you think may be relevant.
+    validations:
+      required: false
 
-## Technical details
-
-Taxi Cam asks MSFS to render two extra camera views and combines them on the GPU for the cockpit display. A Windows tray app manages the settings, and a graphics bridge runs inside the simulator. This relies on undocumented simulator interfaces; it does not change your simulator graphics settings.
-
-- [How it works](docs/architecture.md)
-- [Settings, graphics requirements and diagnostics](docs/runtime-reference.md)
-- [Aircraft profiles and calibration](docs/aircraft-profiles.md)
-- [Builds and releases](docs/releases.md)
-- [Source layout](docs/repository-structure.md)
-
-See [Third-party notices](THIRD_PARTY_NOTICES.md).
-
-## Licence
-
-Copyright © 2026 Robert Thomson. Original Taxi Cam code and project files are licensed under the [GNU General Public License, version 3 only](LICENSE) (`GPL-3.0-only`). Commercial use is allowed. If you distribute Taxi Cam or a covered derivative, you must comply with GPLv3, including its licence, notice and corresponding-source requirements. The software comes without warranty.
-
-Release notes link to the exact source revision, including the build and installation scripts. Windows packages and installations include `LICENSE.txt`. Third-party components retain their own licences and [notices](THIRD_PARTY_NOTICES.md).
-
-## TaxiCam-Fixed 0.9.29 issue-fix candidate
-
-This supplied development build preserves the upstream Taxi Cam rendering/PFD path and adds bounded zero-progress capture recovery plus expanded transient scene recovery. See `ISSUE_FIXES.md`.
+  - type: checkboxes
+    id: final-check
+    attributes:
+      label: Final check
+      options:
+        - label: I have provided as much information as I can and understand that more information may be requested.
+          required: true
+    validations:
+      required: true
