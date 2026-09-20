@@ -1,4 +1,4 @@
-# Taxi Cam
+# TaxiCam-Fixed
 
 Nose-wheel and tail cameras for Microsoft Flight Simulator 2024. Use the aircraft's **TAXI** button or a keyboard shortcut to see both views on the upper part of its Primary Flight Display (PFD).
 
@@ -15,7 +15,7 @@ If you are up for reporting issues then I can try and help out.
 
 ## Important notice
 
-Taxi Cam is **experimental** and uses an unsupported simulator integration. It is not endorsed by Microsoft or Asobo. Simulator or aircraft updates may cause problems, including crashes. **Use at your own risk.**
+TaxiCam-Fixed is **experimental** and uses an unsupported simulator integration. It is not endorsed by Microsoft or Asobo. Simulator or aircraft updates may cause problems, including crashes. **Use at your own risk.**
 
 If you find Taxi Cam useful, please consider donating.
 
@@ -102,9 +102,25 @@ Use **Check for updates** in the tray menu, or download the latest installer fro
 
 Existing shortcut choices are kept too. To adopt **Ctrl + Shift + L / R / B**, open **Overview → Flight-deck control → Keyboard shortcuts…**, select **Reset shortcuts**, then **Save changes** in that editor.
 
-Click the version number at the bottom of the settings sidebar to open the Taxi Cam GitHub repository in your browser.
+Click the version number at the bottom of the settings sidebar to open the TaxiCam-Fixed GitHub repository in your browser.
 
-To remove the mod, close both applications and uninstall **Taxi Cam** from Windows Installed apps. **Keep settings** is the default choice so a later installation can reuse them. Choose **Remove saved settings** to clear camera profiles, calibration, guides, keyboard shortcuts and first-launch preferences instead. This also clears known profiles retained under the former **380 Taxi Cam** name, preventing them from being imported again. Logs and unrelated files are kept.
+To remove the mod, close both applications and uninstall **TaxiCam-Fixed** from Windows Installed apps. **Keep settings** is the default choice so a later installation can reuse them. Choose **Remove saved settings** to clear camera profiles, calibration, guides, keyboard shortcuts and first-launch preferences instead. This also clears known profiles retained under the former **380 Taxi Cam** name, preventing them from being imported again. Logs and unrelated files are kept.
+
+## Development workflow
+
+TaxiCam-Fixed is developed from the known-working upstream implementation rather than replacing the established PFD/D3D12 camera path.
+
+Changes are tested locally before publication:
+
+1. Reproduce or observe a problem.
+2. Use the diagnostics to identify the failing subsystem and source location.
+3. Make a targeted source-code change.
+4. Build a new local EXE/DLL.
+5. Test the A350 PFD/camera behaviour in MSFS 2024.
+6. Run a regression check to ensure existing Taxi Cam functionality still works.
+7. Only then consider the change ready for publication.
+
+No GitHub publication is required for local testing.
 
 ## Reporting a problem
 
@@ -112,9 +128,88 @@ Click the app's **bug icon** or choose **Report a bug** in the tray menu. Descri
 
 You can also [open a bug report on GitHub](https://github.com/rthoms334/taxi-cam/issues/new?template=bug_report.yml).
 
+## Diagnostics and troubleshooting
+
+TaxiCam-Fixed includes structured diagnostics intended to make runtime failures easier to trace to the actual subsystem and source location.
+
+The structured diagnostics log is written to:
+
+```text
+%LOCALAPPDATA%\\TaxiCam-Fixed\\diagnostics.log
+```
+
+The bridge retains its existing telemetry log:
+
+```text
+%LOCALAPPDATA%\\Taxi Cam\\bridge.log
+```
+
+Structured diagnostic records can include:
+
+- UTC timestamp
+- process ID
+- thread ID
+- module
+- severity
+- diagnostic/error code
+- source file
+- function
+- source line
+- runtime message
+
+For example:
+
+```text
+module=[TaxiCam-Fixed::D3D12]
+level=ERROR
+code=D3D12-INIT-FAILED
+file=bridge_main.cpp
+function=run_impl
+line=...
+```
+
+The diagnostics system deliberately distinguishes **where a failure was observed** from a confirmed root cause. A source file appearing in a diagnostic entry is not automatically treated as the cause. The development workflow is:
+
+```text
+Observed failure
+    ↓
+Failure boundary
+    ↓
+Source location
+    ↓
+Related execution path
+    ↓
+Targeted source change
+    ↓
+Rebuild
+    ↓
+MSFS/A350 regression test
+```
+
+Diagnostics are best-effort and are designed not to interfere with simulator operation.
+
+### Local development builds
+
+TaxiCam-Fixed can be built locally without a Git repository or GitHub checkout.
+
+Requirements:
+
+- Windows 10/11 64-bit
+- `clang++.exe` available on `PATH`
+- `llvm-windres.exe` available on `PATH`
+
+From the `taxi-cam-main` directory:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\\build.ps1
+```
+
+The source files are the development inputs. The EXE/DLL files produced by the build are test outputs used to run the modified code in MSFS.
+
 ## Technical details
 
-Taxi Cam asks MSFS to render two extra camera views and combines them on the GPU for the cockpit display. A Windows tray app manages the settings, and a graphics bridge runs inside the simulator. This relies on undocumented simulator interfaces; it does not change your simulator graphics settings.
+TaxiCam-Fixed asks MSFS to render two extra camera views and combines them on the GPU for the cockpit display. A Windows tray app manages the settings, and a graphics bridge runs inside the simulator. This relies on undocumented simulator interfaces; it does not change your simulator graphics settings.
 
 - [How it works](docs/architecture.md)
 - [Settings, graphics requirements and diagnostics](docs/runtime-reference.md)
@@ -126,10 +221,16 @@ See [Third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Licence
 
-Copyright © 2026 Robert Thomson. Original Taxi Cam code and project files are licensed under the [GNU General Public License, version 3 only](LICENSE) (`GPL-3.0-only`). Commercial use is allowed. If you distribute Taxi Cam or a covered derivative, you must comply with GPLv3, including its licence, notice and corresponding-source requirements. The software comes without warranty.
+Copyright © 2026 Robert Thomson. The upstream Taxi Cam code and project files used as the baseline are licensed under the [GNU General Public License, version 3 only](LICENSE) (`GPL-3.0-only`). Commercial use is allowed. If you distribute Taxi Cam or a covered derivative, you must comply with GPLv3, including its licence, notice and corresponding-source requirements. The software comes without warranty.
 
 Release notes link to the exact source revision, including the build and installation scripts. Windows packages and installations include `LICENSE.txt`. Third-party components retain their own licences and [notices](THIRD_PARTY_NOTICES.md).
 
-## TaxiCam-Fixed 0.9.29 issue-fix candidate
+## TaxiCam-Fixed development build
 
-This supplied development build preserves the upstream Taxi Cam rendering/PFD path and adds bounded zero-progress capture recovery plus expanded transient scene recovery. See `ISSUE_FIXES.md`.
+This development build preserves the upstream Taxi Cam rendering/PFD path while adding targeted stability fixes and structured diagnostics.
+
+The project is being developed as a local, test-first fixed version of the upstream Taxi Cam implementation. Reported problems are being addressed individually so each change can be tested against the known-working A350 PFD/camera behaviour before it is considered complete.
+
+> **Development status:** fixes are candidates until they have been reproduced and verified in the simulator. This README does not claim that every reported upstream issue has been conclusively resolved.
+
+See `ISSUE_FIXES.md` for the current issue-fix work.
