@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <winhttp.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include "../camera/aircraft_identity.hpp"
@@ -6,6 +7,8 @@
 #include <shellapi.h>
 #include <uxtheme.h>
 #include <atomic>
+#include <algorithm>
+#include <cctype>
 #include <cwchar>
 #include <mutex>
 #include <string>
@@ -22,6 +25,8 @@
 #include "../shared/profile_selection.hpp"
 #include "../graphics/target_assignment.hpp"
 #include "updater.hpp"
+#include "../shared/diagnostics.hpp"
+#include "../shared/advanced_diagnostics.hpp"
 
 namespace {
 using namespace taxi_camera;
@@ -29,9 +34,10 @@ namespace win = standalone;
 constexpr UINT TrayMessage = WM_APP + 1, StatusMessage = WM_APP + 2;
 constexpr wchar_t WindowClass[] = L"380TaxiCamera.Settings";
 constexpr wchar_t DonationUrl[] = L"https://www.paypal.com/donate/?hosted_button_id=EPVELD44P6NXW";
-constexpr wchar_t GithubUrl[] = L"https://github.com/rthoms334/taxi-cam";
-constexpr COLORREF Background = RGB(17, 21, 28), Sidebar = RGB(12, 16, 22), Card = RGB(26, 32, 41), Border = RGB(44, 54, 67),
-                   Text = RGB(232, 238, 246), Muted = RGB(154, 170, 188), Accent = RGB(66, 219, 184);
+constexpr wchar_t GithubUrl[] = L"https://github.com/JoelScripts/A350-Improvements";
+constexpr COLORREF Background = RGB(6, 12, 19), Sidebar = RGB(9, 17, 27), Card = RGB(16, 27, 40), Border = RGB(39, 59, 78),
+                   Text = RGB(232, 240, 247), Muted = RGB(132, 154, 174), Accent = RGB(57, 211, 224);
+constexpr COLORREF Amber = RGB(245, 181, 70), Panel2 = RGB(12, 22, 34), Deep = RGB(4, 9, 15);
 HINSTANCE instance{};
 HWND window{}, sidebar_tooltip{}, shortcut_window{};
 HFONT normal{}, small{}, title_font{}, heading{}, version_font{};
@@ -54,12 +60,41 @@ std::atomic<DWORD> simulator_pid{};
 HANDLE worker{}, show_event{}, singleton{};
 bool dirty = false, refreshing = false, background_start = false, preview_ui = false;
 std::atomic<bool> auto_connect{true};
+struct GithubIssue {
+  int number{};
+  bool open{};
+  bool pull_request{};
+  bool in_progress{};
+  std::string title;
+  std::string url;
+  std::string labels;
+  std::string updated;
+  std::string body;
+};
+std::vector<GithubIssue> github_issues;
+std::wstring github_issue_error;
+std::vector<RECT> github_issue_cards;
+constexpr int GithubRefreshId = 701;
+constexpr int GithubOpenId = 702;
+constexpr int GithubReportId = 703;
 std::atomic<bool> connection_requested{}, connection_disconnected{};
 win::ConnectCommandQueue connect_commands;
 win::CameraHotkeys hotkey_draft = win::DefaultCameraHotkeys, hotkey_saved = win::DefaultCameraHotkeys;
 win::CameraHotkeyRegistration hotkey_registration;
 bool hotkey_editor_focused{}, hotkeys_closing{};
 win::Updater updater;
+struct DiagnosticWatchState {
+  std::uint64_t last_heartbeat{};
+  std::uint64_t last_event_ms{};
+  std::uint64_t last_progress_event_ms{};
+  std::uint64_t last_taxi_mask{};
+  std::uint64_t last_captures{};
+  std::uint64_t last_stamps{};
+  bool initialized{};
+  bool stale_reported{};
+};
+DiagnosticWatchState diagnostic_watch;
+void service_diagnostics_watch(const win::Status& sample) noexcept;
 ULONGLONG next_update_check{};
 bool update_prompt{};
 int scale(int v) {
@@ -233,6 +268,202 @@ bool exchange_control(win::Mailbox& mailbox, win::Status* sample = nullptr) {
   mailbox.unlock();
   return true;
 }
+
+std::string json_number_field(std::string_view object, std::string_view key) {
+  const std::string needle = "\"" + std::string(key) + "\":";
+  const auto pos = object.find(needle);
+  if (pos == std::string_view::npos) return {};
+  size_t i = pos + needle.size();
+  while (i < object.size() && (object[i] == ' ' || object[i] == '\n' || object[i] == '\r' || object[i] == '\t')) ++i;
+  const size_t start = i;
+  while (i < object.size() && ((object[i] >= '0' && object[i] <= '9') || object[i] == '-')) ++i;
+  return std::string(object.substr(start, i - start));
+}
+
+std::string json_string_field(std::string_view object, std::string_view key) {
+  const std::string needle = "\"" + std::string(key) + "\":";
+  const auto pos = object.find(needle);
+  if (pos == std::string_view::npos) return {};
+  size_t i = pos + needle.size();
+  while (i < object.size() && (object[i] == ' ' || object[i] == '\n' || object[i] == '\r' || object[i] == '\t')) ++i;
+  if (i >= object.size() || object[i] != '\"') return {};
+  ++i;
+  std::string out;
+  bool escape = false;
+  for (; i < object.size(); ++i) {
+    const char c = object[i];
+    if (escape) {
+      switch (c) {
+        case 'n': out += '\n'; break;
+        case 'r': out += '\r'; break;
+        case 't': out += '\t'; break;
+        case '\\': out += '\\'; break;
+        case '\"': out += '\"'; break;
+        default: out += c; break;
+      }
+      escape = false;
+    } else if (c == '\\') {
+      escape = true;
+    } else if (c == '\"') {
+      break;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+bool json_has_key(std::string_view object, std::string_view key) {
+  return object.find("\"" + std::string(key) + "\":") != std::string_view::npos;
+}
+
+std::vector<std::string_view> json_issue_objects(std::string_view json) {
+  std::vector<std::string_view> result;
+  bool in_string = false, escape = false;
+  int depth = 0;
+  size_t start = std::string_view::npos;
+  for (size_t i = 0; i < json.size(); ++i) {
+    const char c = json[i];
+    if (in_string) {
+      if (escape) escape = false;
+      else if (c == '\\') escape = true;
+      else if (c == '\"') in_string = false;
+      continue;
+    }
+    if (c == '\"') { in_string = true; continue; }
+    if (c == '{') {
+      if (depth++ == 0) start = i;
+    } else if (c == '}' && depth > 0) {
+      if (--depth == 0 && start != std::string_view::npos) {
+        result.push_back(json.substr(start, i - start + 1));
+        start = std::string_view::npos;
+      }
+    }
+  }
+  return result;
+}
+
+std::string github_get_issues(std::wstring* error) {
+  if (error) error->clear();
+  const std::wstring host = L"api.github.com";
+  const std::wstring path = L"/repos/JoelScripts/A350-Improvements/issues?state=open&per_page=50&sort=updated&direction=desc";
+  HINTERNET session = WinHttpOpen(L"TaxiCam-Fixed/0.9.37", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+                                  WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!session) { if (error) *error = L"GitHub connection could not be started."; return {}; }
+  WinHttpSetTimeouts(session, 2500, 2500, 5000, 5000);
+  HINTERNET connect = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+  if (!connect) { if (error) *error = L"Could not connect to GitHub."; WinHttpCloseHandle(session); return {}; }
+  HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+  if (!request) { if (error) *error = L"Could not create the GitHub request."; WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return {}; }
+  const wchar_t headers[] = L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2026-03-10\r\nUser-Agent: TaxiCam-Fixed\r\n";
+  const bool sent = WinHttpSendRequest(request, headers, static_cast<DWORD>(-1L), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, nullptr);
+  DWORD status_code = 0, status_size = sizeof(status_code);
+  if (sent) WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                                &status_code, &status_size, WINHTTP_NO_HEADER_INDEX);
+  std::string body;
+  if (sent && status_code == 200) {
+    for (;;) {
+      DWORD available = 0;
+      if (!WinHttpQueryDataAvailable(request, &available) || !available) break;
+      std::string chunk(available, '\0');
+      DWORD read = 0;
+      if (!WinHttpReadData(request, chunk.data(), available, &read) || !read) break;
+      chunk.resize(read);
+      body += chunk;
+      if (body.size() > 2 * 1024 * 1024) break;
+    }
+  }
+  WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
+  if (!sent || status_code != 200 || body.empty()) {
+    if (error) {
+      wchar_t message[128];
+      std::swprintf(message, 128, L"GitHub returned HTTP %lu.", static_cast<unsigned long>(status_code));
+      *error = sent ? message : L"GitHub could not be reached. Check your internet connection.";
+    }
+    return {};
+  }
+  return body;
+}
+
+void refresh_github_issues(bool notify = true) {
+  std::wstring error;
+  const auto json = github_get_issues(&error);
+  if (json.empty()) {
+    github_issue_error = error.empty() ? L"No issue data was returned by GitHub." : error;
+    if (notify) notice = L"Could not refresh GitHub bug reports.";
+    InvalidateRect(window, nullptr, FALSE);
+    return;
+  }
+  std::vector<GithubIssue> next;
+  for (const auto object : json_issue_objects(json)) {
+    if (json_has_key(object, "pull_request")) continue;
+    GithubIssue issue;
+    const auto number = json_number_field(object, "number");
+    try { issue.number = std::stoi(number); } catch (...) { issue.number = 0; }
+    issue.open = json_string_field(object, "state") == "open";
+    issue.title = json_string_field(object, "title");
+    issue.url = json_string_field(object, "html_url");
+    issue.updated = json_string_field(object, "updated_at");
+    issue.body = json_string_field(object, "body");
+    const auto labels_start = object.find("\"labels\":[");
+    if (labels_start != std::string_view::npos) {
+      const auto end = object.find(']', labels_start);
+      if (end != std::string_view::npos) {
+        const auto labels_json = object.substr(labels_start, end - labels_start + 1);
+        for (const auto label : json_issue_objects(labels_json)) {
+          const auto name = json_string_field(label, "name");
+          if (!name.empty()) {
+            if (!issue.labels.empty()) issue.labels += " • ";
+            issue.labels += name;
+            std::string lower = name;
+            for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (lower.find("progress") != std::string::npos || lower == "in-progress" || lower == "in progress") issue.in_progress = true;
+          }
+        }
+      }
+    }
+    if (issue.number > 0 && !issue.title.empty() && !issue.url.empty()) next.push_back(std::move(issue));
+  }
+  std::stable_sort(next.begin(), next.end(), [](const GithubIssue& a, const GithubIssue& b) {
+    if (a.open != b.open) return a.open > b.open;
+    return a.updated > b.updated;
+  });
+  github_issues = std::move(next);
+  github_issue_error.clear();
+  if (notify) notice = L"GitHub bug reports refreshed.";
+  InvalidateRect(window, nullptr, FALSE);
+}
+void open_github_issue(int index) {
+  if (index < 0 || index >= static_cast<int>(github_issues.size())) return;
+  const auto result = reinterpret_cast<INT_PTR>(ShellExecuteA(window, "open", github_issues[index].url.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+  if (result <= 32) notice = L"Could not open the GitHub issue in your browser.";
+}
+
+void open_diagnostic_file(const std::wstring& path, const wchar_t* label) {
+  if (path.empty()) {
+    win::advanced_diagnostics::initialize("companion");
+  }
+  const auto& target = path.empty() ? win::advanced_diagnostics::summary_path : path;
+  if (target.empty()) {
+    notice = std::wstring(L"Could not locate ") + label + L".";
+    InvalidateRect(window, nullptr, FALSE);
+    return;
+  }
+  const DWORD attributes = GetFileAttributesW(target.c_str());
+  if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    notice = std::wstring(L"The ") + label + L" is not available yet. Open the log folder instead.";
+    InvalidateRect(window, nullptr, FALSE);
+    return;
+  }
+  const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+  if (result <= 32)
+    notice = std::wstring(L"Could not open ") + label + L".";
+  else
+    notice = std::wstring(L"Opened ") + label + L".";
+  InvalidateRect(window, nullptr, FALSE);
+}
+
 void donate() {
   const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", DonationUrl, nullptr, nullptr, SW_SHOWNORMAL));
   if (result <= 32)
@@ -656,6 +887,7 @@ void auto_profile() {
   build_controls();
 }
 void build_controls() {
+  win::advanced_diagnostics::initialize("companion");
   refreshing = true;
   if (sidebar_tooltip) {
     DestroyWindow(sidebar_tooltip);
@@ -666,12 +898,12 @@ void build_controls() {
   controls.clear();
   navigation.clear();
   const auto s = draft();
-  const wchar_t* names[]{L"Overview", L"Camera views", L"Display", L"PFD routing", L"Diagnostics", L"Reference guides"};
-  for (int i = 0; i < 6; ++i)
-    navigation.push_back(button(names[i], 100 + i, 20, 156 + i * 49, 166, 40));
-  const auto donate_button = button(L"Donate", 513, 24, 590, 110, 40);
-  const auto report_button = button(L"Report a bug", 512, 24, 638, 40, 40);
-  const auto version_link = button(L"v" TAXI_CAM_VERSION_WIDE, 514, 24, 692, 155, 22);
+  const wchar_t* names[]{L"Overview", L"Camera views", L"Display", L"PFD routing", L"Diagnostics", L"Reference guides", L"Bug Reports"};
+  for (int i = 0; i < 7; ++i)
+    navigation.push_back(button(names[i], 100 + i, 235 + i * 108, 86, 100, 34));
+  const auto donate_button = button(L"Donate", 513, 1115, 725, 110, 34);
+  const auto report_button = button(L"Report a bug", 512, 1235, 725, 145, 34);
+  const auto version_link = button(L"v" TAXI_CAM_VERSION_WIDE, 514, 1115, 765, 100, 22);
   SendMessageW(version_link, WM_SETFONT, reinterpret_cast<WPARAM>(version_font), TRUE);
   sidebar_tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT,
                                     CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr, instance, nullptr);
@@ -690,9 +922,9 @@ void build_controls() {
     tip.lpszText = const_cast<wchar_t*>(L"Open Taxi Cam on GitHub");
     SendMessageW(sidebar_tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tip));
   }
-  button(L"Menu", 602, 930, 37, 80, 34);
-  button(L"Save changes", 500, 835, 686, 175, 42);
-  button(L"Hide to tray", 501, 650, 686, 165, 42);
+  button(L"Menu", 602, 1310, 86, 80, 34);
+  button(L"Save changes", 500, 1115, 670, 135, 42);
+  button(L"Hide to tray", 501, 1258, 670, 137, 42);
   if (page == 0) {
     HWND combo = child(L"COMBOBOX", L"", 210, 260, 326, 420, 220, CBS_DROPDOWNLIST | WS_VSCROLL);
     for (const auto* profile : profiles::Catalog)
@@ -741,6 +973,10 @@ void build_controls() {
     edit(s.calibration_budget, 203, 840, 548, 120);
     button(L"Open log folder", 510, 260, 591, 210);
     button(L"Stop camera tests", 511, 500, 591, 210);
+    button(L"Open summary", 515, 260, 635, 185, 34);
+    button(L"Open readable log", 516, 465, 635, 185, 34);
+    button(L"Open JSONL", 517, 670, 635, 185, 34);
+    button(L"Open state", 518, 875, 635, 185, 34);
   } else if (page == 5) {
     const std::array<float, 2> guides[]{s.nose_dot, s.tail_upper, s.tail_corner, s.tail_inner};
     for (unsigned i = 0; i < 4; ++i) {
@@ -751,6 +987,10 @@ void build_controls() {
     button(L"Apply live", 370, 260, 608, 185);
     button(L"Reset guides", 371, 467, 608, 250);
     button(L"Marking colour", 372, 740, 608, 235);
+  } else if (page == 6) {
+    button(L"Refresh issues", GithubRefreshId, 760, 126, 120, 36);
+    button(L"Open GitHub", GithubOpenId, 888, 126, 122, 36);
+    button(L"Report a bug", GithubReportId, 760, 690, 250, 42);
   }
   refreshing = false;
   InvalidateRect(window, nullptr, TRUE);
@@ -795,186 +1035,160 @@ void draw_page(HDC dc) {
   RECT client{};
   GetClientRect(window, &client);
   FillRect(dc, &client, background_brush);
-  auto left = rectangle(0, 0, 210, 780);
-  HBRUSH b = CreateSolidBrush(Sidebar);
-  FillRect(dc, &left, b);
-  DeleteObject(b);
-  DrawIconEx(dc, scale(24), scale(35), icon, scale(32), scale(32), 0, nullptr, DI_NORMAL);
-  text(dc, L"TAXI CAM", 68, 33, 134, 22, heading);
-  text(dc, L"Native taxi cameras", 24, 84, 176, 22, small, Muted);
-  text(dc, L"WINDOWS COMPANION", 24, 120, 182, 22, small, Muted);
-  const wchar_t* titles[]{L"Taxi camera", L"Camera views", L"Display", L"PFD routing", L"Diagnostics", L"Reference guides"};
-  const wchar_t* subtitles[]{L"Your taxi cameras, controlled from the flight deck.",
-                             L"Fine-tune each camera independently. Changes stay with this aircraft.",
-                             L"Balance visibility, colour and camera update rate.",
-                             L"Connect each TAXI button to the correct display.",
-                             L"Live status and the controls used during camera testing.",
-                             L"Move the guide points, preview them live, then save for this aircraft."};
-  text(dc, titles[page], 244, 30, 740, 48, title_font);
-  text(dc, subtitles[page], 247, 84, 758, 30, normal, Muted);
+  auto fill = [&](int x, int y, int w, int h, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    RECT r = rectangle(x, y, w, h);
+    FillRect(dc, &r, brush);
+    DeleteObject(brush);
+  };
+  auto line = [&](int x1, int y1, int x2, int y2, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, scale(1), color);
+    auto old = SelectObject(dc, pen);
+    MoveToEx(dc, scale(x1), scale(y1), nullptr);
+    LineTo(dc, scale(x2), scale(y2));
+    SelectObject(dc, old);
+    DeleteObject(pen);
+  };
+  auto badge = [&](const wchar_t* value, int x, int y, int w, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(Deep);
+    HPEN pen = CreatePen(PS_SOLID, scale(1), color);
+    auto ob = SelectObject(dc, brush), op = SelectObject(dc, pen);
+    RoundRect(dc, scale(x), scale(y), scale(x + w), scale(y + 26), scale(13), scale(13));
+    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(brush); DeleteObject(pen);
+    text(dc, value, x + 8, y, w - 16, 26, small, color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  };
+  auto section = [&](const wchar_t* kicker, const wchar_t* title, const wchar_t* sub) {
+    text(dc, kicker, 34, 148, 180, 18, small, Accent);
+    text(dc, title, 34, 169, 730, 42, title_font, Text);
+    text(dc, sub, 36, 211, 730, 26, small, Muted);
+    line(34, 246, 1068, 246, Border);
+  };
+  auto metric = [&](const wchar_t* label, const wchar_t* value, int x, int y, COLORREF color) {
+    panel(dc, x, y, 210, 82, Panel2);
+    text(dc, label, x + 14, y + 10, 180, 18, small, Muted);
+    text(dc, value, x + 14, y + 34, 180, 30, heading, color);
+  };
+
+  // New shell: no sidebar. A full-width flight-deck command strip replaces the old navigation model.
+  fill(0, 0, 1440, 72, Deep);
+  fill(0, 72, 1440, 58, Sidebar);
+  line(0, 71, 1440, 71, Border);
+  line(0, 129, 1440, 129, Border);
+  DrawIconEx(dc, scale(24), scale(18), icon, scale(38), scale(38), 0, nullptr, DI_NORMAL);
+  text(dc, L"TAXICAM", 76, 12, 150, 28, heading, Text);
+  text(dc, L"FLIGHT DECK SYSTEM", 76, 40, 220, 18, small, Muted);
+  const wchar_t* tabs[]{L"COMMAND", L"CAMERAS", L"DISPLAY", L"PFD", L"DIAGNOSTICS", L"GUIDES", L"ISSUES"};
+  for (int i = 0; i < 7; ++i) {
+    const int x = 235 + i * 108;
+    const bool selected = page == i;
+    if (selected) fill(x, 82, 100, 34, RGB(16, 45, 55));
+    text(dc, tabs[i], x, 84, 100, 30, small, selected ? Accent : Muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if (selected) fill(x + 18, 122, 64, 2, Accent);
+  }
+  badge(L"MSFS 2024", 1035, 22, 100, Muted);
   win::Status sample;
   std::wstring live;
-  {
-    const std::lock_guard lock(app_mutex);
-    sample = status;
-    live = connection;
-  }
+  { const std::lock_guard lock(app_mutex); sample = status; live = connection; }
   const bool has_displays = sample.candidate_count != 0 || sample.left_id != 0 || sample.right_id != 0;
+  const bool connected = connection_requested.load(std::memory_order_acquire) && sample.graphics_ready;
+  const bool healthy = connected && sample.scene_ready && has_displays;
+  const COLORREF health = healthy ? Accent : connected ? Amber : Muted;
+  badge(healthy ? L"SYSTEM READY" : connected ? L"CONNECTING" : L"OFFLINE", 1148, 22, 120, health);
+
+  // Right telemetry rail.
+  fill(1090, 145, 320, 620, RGB(8, 16, 25));
+  line(1090, 145, 1090, 765, Border);
+  text(dc, L"LIVE TELEMETRY", 1112, 165, 250, 24, small, Accent);
+  text(dc, L"CURRENT SESSION", 1112, 193, 250, 18, small, Muted);
+  metric(L"SIMULATOR", connected ? L"ONLINE" : L"WAITING", 1112, 225, connected ? Accent : Muted);
+  metric(L"GRAPHICS", sample.graphics_ready ? L"D3D12" : L"WAITING", 1112, 318, sample.graphics_ready ? Accent : Muted);
+  metric(L"PFD TARGETS", has_displays ? L"LOCKED" : L"SEARCH", 1112, 411, has_displays ? Accent : Amber);
+  metric(L"CAPTURE", sample.captures ? L"RUNNING" : L"IDLE", 1112, 504, sample.captures ? Accent : Muted);
+  metric(L"PFD OUTPUT", sample.stamps ? L"ACTIVE" : L"IDLE", 1112, 597, sample.stamps ? Accent : Muted);
+  const auto* rail_profile = profiles::find(draft().profile);
+  text(dc, rail_profile ? rail_profile->name : L"Automatic profile", 1112, 700, 280, 24, normal, Text, DT_LEFT | DT_END_ELLIPSIS | DT_SINGLELINE);
+  text(dc, L"ACTIVE AIRCRAFT", 1112, 725, 250, 18, small, Muted);
+  text(dc, connected ? L"Live bridge heartbeat received" : live.c_str(), 1112, 744, 280, 38, small, health, DT_LEFT | DT_WORDBREAK);
+
+  // Main content area.
   if (page == 0) {
-    panel(dc, 244, 137, 766, 140);
-    text(dc,
-         connection_disconnected.load(std::memory_order_acquire) ? L"Disconnected"
-         : !sample.graphics_ready                                ? L"Waiting for the simulator"
-         : has_displays                                          ? L"Native bridge connected"
-                                                                 : L"Native bridge connected — waiting for cockpit displays",
-         266, 153, 500, 30, heading, sample.graphics_ready && has_displays ? Accent : Text);
-    const bool late_empty_pfds = sample.graphics_ready && !has_displays;
-    const auto line = late_empty_pfds    ? std::wstring(
-                                               L"Waiting for cockpit displays to be drawn. "
-                                               L"Restart Flight only if the list stays empty.")
-                      : sample.heartbeat ? widen(sample.message)
-                                         : live;
-    text(dc, line.c_str(), 266, 188, 715, 36, normal, late_empty_pfds ? Accent : Muted, DT_LEFT | DT_WORDBREAK);
-    panel(dc, 244, 295, 766, 93);
-    text(dc, L"Aircraft profile", 260, 298, 350, 22, small, Muted);
-    panel(dc, 244, 395, 766, 96);
-    text(dc, L"Flight-deck control", 264, 406, 300, 30, heading);
-    const auto* profile = profiles::find(draft().profile);
-    const bool manual = profile && profile->taxi_control == profiles::TaxiControl::manual_only;
-    text(dc,
-         manual ? L"Use Keyboard shortcuts or PFD routing previews for this aircraft."
-                : L"Left and right EFIS TAXI buttons activate their own PFD.",
-         264, 446, 530, 30, small, Muted, DT_LEFT | DT_WORDBREAK);
-    panel(dc, 244, 511, 766, 102);
-    text(dc, L"Camera frame rate", 264, 525, 460, 30, heading);
-    text(dc, L"Min 5 fps per camera (range 5–60). This install sets 10.", 264, 564, 540, 24, small, Muted);
-    text(dc, L"Cameras and TAXI buttons turn off above 60 knots.", 250, 630, 730, 24, small, Muted);
+    section(L"01 / COMMAND", L"Mission control", L"Connect, select the active aircraft profile and control the flight-deck camera system.");
+    panel(dc, 34, 272, 1034, 126);
+    text(dc, L"SESSION", 54, 289, 180, 18, small, Muted);
+    text(dc, connected ? L"CONNECTED TO MICROSOFT FLIGHT SIMULATOR" : L"WAITING FOR MICROSOFT FLIGHT SIMULATOR", 54, 315, 700, 28, heading, health);
+    text(dc, connected ? L"Bridge and simulator state are available." : L"Start MSFS 2024, then use Connect when the simulator is ready.", 54, 351, 700, 22, small, Muted);
+    badge(auto_connect.load() ? L"AUTO CONNECT ON" : L"AUTO CONNECT OFF", 815, 310, 205, auto_connect.load() ? Accent : Muted);
+    panel(dc, 34, 416, 500, 208);
+    text(dc, L"AIRCRAFT PROFILE", 54, 435, 260, 20, small, Accent);
+    const auto* p = profiles::find(draft().profile);
+    text(dc, p ? p->name : L"Automatic profile", 54, 465, 430, 32, heading);
+    text(dc, L"Settings are isolated per aircraft and persist between sessions.", 54, 507, 420, 42, small, Muted, DT_LEFT | DT_WORDBREAK);
+    text(dc, L"TAXI BUTTON ROUTING", 54, 568, 220, 20, small, Muted);
+    const bool manual = p && p->taxi_control == profiles::TaxiControl::manual_only;
+    text(dc, manual ? L"MANUAL" : (draft().follow_taxi ? L"ACTIVE" : L"OFF"), 280, 564, 160, 28, heading, manual ? Amber : draft().follow_taxi ? Accent : Muted);
+    panel(dc, 558, 416, 510, 208);
+    text(dc, L"FLIGHT-DECK STATUS", 578, 435, 300, 20, small, Accent);
+    text(dc, sample.scene_ready ? L"CAMERA ENGINE READY" : L"CAMERA ENGINE WAITING", 578, 466, 440, 30, heading, sample.scene_ready ? Accent : Muted);
+    text(dc, L"NOSE", 578, 515, 100, 18, small, Muted);
+    text(dc, sample.captures ? L"CAPTURING" : L"STANDBY", 578, 537, 150, 25, normal, sample.captures ? Accent : Muted);
+    text(dc, L"TAIL", 760, 515, 100, 18, small, Muted);
+    text(dc, sample.captures ? L"CAPTURING" : L"STANDBY", 760, 537, 150, 25, normal, sample.captures ? Accent : Muted);
+    text(dc, L"PFD", 930, 515, 70, 18, small, Muted);
+    text(dc, has_displays ? L"LOCKED" : L"SEARCH", 930, 537, 100, 25, normal, has_displays ? Accent : Amber);
+    text(dc, L"10 FPS DEFAULT  •  AUTO DISABLE ABOVE 60 KNOTS", 578, 583, 430, 22, small, Muted);
   } else if (page == 1) {
-    constexpr const wchar_t* labels[]{L"Right (m)", L"Up (m)", L"Forward (m)", L"Pitch (deg)", L"Yaw (deg)", L"Lens (rad)"};
-    for (int i = 0; i < 2; ++i) {
-      const int x = 244 + i * 375;
-      panel(dc, x, 138, 354, 424);
-      text(dc, i ? L"Tail camera" : L"Nose-wheel camera", x + 16, 154, 324, 30, heading);
-      const auto* profile = profiles::find(draft().profile);
-      const auto& dimensions = (profile ? *profile : profiles::A380).camera_panes[i];
-      wchar_t view_label[96];
-      std::swprintf(view_label, 96, L"%ls · %d × %d", i ? L"LOWER VIEW" : L"UPPER VIEW", dimensions[0], dimensions[1]);
-      text(dc, view_label, x + 16, 190, 324, 22, small, Muted);
-      for (int j = 0; j < 6; ++j)
-        text(dc, labels[j], x + 16 + (j % 3) * 106, 215 + (j / 3) * 108, 98, 24, small, Muted);
-      text(dc, L"Position relative to the aircraft datum", x + 16, 397, 324, 22, small, Muted);
-    }
-    text(dc, L"Positive pitch looks up. Positive yaw looks right.", 530, 594, 462, 45, small, Muted, DT_LEFT | DT_WORDBREAK);
+    section(L"02 / CAMERAS", L"Camera geometry", L"Tune nose-wheel and tail camera mounting geometry for the active aircraft profile.");
+    panel(dc, 34, 272, 500, 350, Panel2); panel(dc, 558, 272, 510, 350, Panel2);
+    text(dc, L"NOSE-WHEEL CAMERA", 54, 292, 420, 28, heading);
+    text(dc, L"UPPER FLIGHT-DECK VIEW", 54, 326, 400, 20, small, Muted);
+    text(dc, L"TAIL CAMERA", 578, 292, 420, 28, heading);
+    text(dc, L"LOWER FLIGHT-DECK VIEW", 578, 326, 400, 20, small, Muted);
+    text(dc, L"GEOMETRY", 54, 374, 150, 18, small, Accent); text(dc, L"GEOMETRY", 578, 374, 150, 18, small, Accent);
+    text(dc, L"Right / Up / Forward", 54, 405, 210, 22, normal, Text); text(dc, L"Right / Up / Forward", 578, 405, 210, 22, normal, Text);
+    text(dc, L"Pitch / Yaw / Lens", 54, 505, 210, 22, normal, Text); text(dc, L"Pitch / Yaw / Lens", 578, 505, 210, 22, normal, Text);
+    text(dc, L"Use the controls above to make precise adjustments.", 54, 575, 450, 24, small, Muted);
+    text(dc, L"Positive pitch looks up  •  positive yaw looks right", 578, 575, 450, 24, small, Muted);
   } else if (page == 2) {
-    const int ys[]{144, 267, 390, 510};
-    const wchar_t* names[]{L"Daytime exposure", L"Automatic night exposure", L"Maximum night boost", L"Camera frame rate"};
-    const wchar_t* descriptions[]{L"Exposure compensation in EV. Your calibrated baseline is −8.8.",
-                                  L"Gradually brighten the camera display as ambient light drops.",
-                                  L"Additional exposure at night, from 0 to +8 EV. Default: +8 EV.",
-                                  L"Activation limit per camera: min 5 fps, range 5–60. Install default: 10."};
-    for (int i = 0; i < 4; ++i) {
-      panel(dc, 244, ys[i], 766, 105);
-      text(dc, names[i], 264, ys[i] + 12, 515, 29, heading);
-      text(dc, descriptions[i], 264, ys[i] + 49, 525, 41, small, Muted, DT_LEFT | DT_WORDBREAK);
-    }
-    wchar_t value[96];
-    std::swprintf(value, 96, L"Currently applied exposure: %.2f EV", sample.exposure);
-    text(dc, sample.heartbeat ? value : L"Applied exposure appears when the camera bridge connects.", 251, 630, 480, 24, small, Muted);
+    section(L"03 / DISPLAY", L"Optical profile", L"Control exposure, night visibility and camera update rate without touching the camera engine.");
+    const int ys[]{272, 360, 448, 536};
+    const wchar_t* names[]{L"DAYTIME EXPOSURE", L"AUTOMATIC NIGHT EXPOSURE", L"MAXIMUM NIGHT BOOST", L"CAMERA FRAME RATE"};
+    const wchar_t* desc[]{L"Exposure compensation in EV.", L"Gradually brighten the camera feed as ambient light drops.", L"Additional exposure available at night.", L"Activation limit per camera; default is 10 FPS."};
+    for (int i=0;i<4;++i) { panel(dc,34,ys[i],1034,72,Panel2); text(dc,names[i],54,ys[i]+10,330,22,heading); text(dc,desc[i],395,ys[i]+12,420,40,small,Muted,DT_LEFT|DT_WORDBREAK); }
+    wchar_t value[96]; std::swprintf(value,96,L"APPLIED EXPOSURE %.2f EV",sample.exposure); badge(value,54,630,260,Accent);
   } else if (page == 3) {
-    panel(dc, 244, 119, 766, 226);
-    text(dc, L"PFD assignment", 262, 127, 420, 30, heading);
-    text(dc, L"Target identities apply to this simulator session.", 262, 166, 715, 25, small, Muted);
-    text(dc, L"LEFT PFD", 260, 207, 315, 25, small, Muted);
-    text(dc, L"RIGHT PFD", 635, 207, 315, 25, small, Muted);
-    panel(dc, 244, 368, 766, 112);
-    text(dc, L"Manual camera preview", 260, 381, 705, 29, heading);
-    text(dc, L"Manual preview and calibration turn off automatic TAXI-button control.", 260, 410, 705, 22, small, Muted);
-    panel(dc, 244, 500, 766, 112);
-    text(dc, L"Target calibration", 260, 507, 705, 29, heading);
-    text(dc, L"Animated bars identify each screen before enabling a live feed.", 260, 581, 705, 23, small, Muted);
-    const auto* profile = profiles::find(draft().profile);
-    text(dc,
-         profile && profile->taxi_control == profiles::TaxiControl::manual_only
-             ? L"Use shortcuts in Overview > Flight-deck control, or manual previews."
-             : L"Enable flight-deck control on Overview to return to normal use.",
-         250, 630, 745, 24, small, Muted);
+    section(L"04 / PFD", L"Display routing", L"Discover, verify and route the camera feeds to the correct flight-deck PFD targets.");
+    panel(dc,34,272,500,190,Panel2); panel(dc,558,272,510,190,Panel2);
+    text(dc,L"LEFT PFD",54,292,250,24,small,Muted); text(dc,has_displays?L"TARGET DETECTED":L"SEARCHING",54,328,420,32,heading,has_displays?Accent:Amber);
+    text(dc,L"Target ID",54,374,120,18,small,Muted); wchar_t ids[64]; std::swprintf(ids,64,L"%llu",static_cast<unsigned long long>(sample.left_id)); text(dc,ids,54,397,220,28,normal,Text);
+    text(dc,L"RIGHT PFD",578,292,250,24,small,Muted); text(dc,has_displays?L"TARGET DETECTED":L"SEARCHING",578,328,420,32,heading,has_displays?Accent:Amber);
+    text(dc,L"Target ID",578,374,120,18,small,Muted); std::swprintf(ids,64,L"%llu",static_cast<unsigned long long>(sample.right_id)); text(dc,ids,578,397,220,28,normal,Text);
+    panel(dc,34,484,1034,138,Panel2); text(dc,L"SAFE ROUTING",54,505,250,22,small,Accent); text(dc,L"Automatic discovery is recommended.",54,536,400,26,heading); text(dc,L"Manual preview and calibration remain available through the controls.",54,573,760,22,small,Muted);
   } else if (page == 4) {
-    panel(dc, 244, 138, 766, 277);
-    wchar_t data[1024];
-    std::swprintf(data, 1024,
-                  L"Bridge                 %s\nCamera pair         %s\nLeft / right PFD    %llu / %llu\nCaptured frames  "
-                  L"%llu\nCompositions       %llu\nPFD writes            %llu\nHook failures        %llu",
-                  sample.graphics_ready ? (has_displays ? L"Connected" : L"Waiting for displays") : L"Waiting",
-                  sample.scene_ready ? L"Ready" : L"Waiting", static_cast<unsigned long long>(sample.left_id),
-                  static_cast<unsigned long long>(sample.right_id), static_cast<unsigned long long>(sample.captures),
-                  static_cast<unsigned long long>(sample.composed), static_cast<unsigned long long>(sample.stamps),
-                  static_cast<unsigned long long>(sample.hook_failures));
-    text(dc, data, 266, 153, 355, 242, normal, Text, DT_LEFT | DT_WORDBREAK);
-    std::swprintf(data, 1024,
-                  L"Probe CPU: %.2f ms (max %.2f)\nManager %.3f   Pool %.3f\nLifecycle %.3f   Entries %.3f\nView 1 %.3f   View 2 "
-                  L"%.3f\nHandoff %.3f   Pose %.3f\nActivation %.3f   Publish %.3f\n\nExcludes engine rendering and GPU time.",
-                  sample.probe_cpu_ms, sample.probe_max_ms, sample.stage_ms[0], sample.stage_ms[1], sample.stage_ms[2], sample.stage_ms[3],
-                  sample.stage_ms[4], sample.stage_ms[5], sample.stage_ms[6], sample.stage_ms[7], sample.stage_ms[8], sample.stage_ms[9]);
-    text(dc, data, 637, 156, 350, 236, small, Muted, DT_LEFT | DT_WORDBREAK);
-    panel(dc, 244, 436, 766, 102);
-    text(dc, L"Scene test renders without PFD delivery.", 260, 488, 730, 42, small, Muted, DT_LEFT | DT_WORDBREAK);
-    const auto line = sample.heartbeat ? widen(sample.message) : live;
-    text(dc, L"Calibration batches per 50 ms (64–16384)", 260, 546, 550, 27, small, Muted);
-    text(dc, line.c_str(), 260, 635, 730, 38, small, Muted, DT_LEFT | DT_WORDBREAK);
+    section(L"05 / DIAGNOSTICS", L"System diagnostics", L"Technical state remains available here without cluttering the normal flight-deck workflow.");
+    metric(L"BRIDGE", sample.graphics_ready?L"READY":L"WAITING",34,272,sample.graphics_ready?Accent:Muted);
+    metric(L"CAMERAS", sample.scene_ready?L"READY":L"WAITING",258,272,sample.scene_ready?Accent:Muted);
+    metric(L"CAPTURE", sample.captures?L"ACTIVE":L"IDLE",482,272,sample.captures?Accent:Muted);
+    metric(L"PFD OUTPUT", sample.stamps?L"ACTIVE":L"IDLE",706,272,sample.stamps?Accent:Muted);
+    panel(dc,34,370,1034,252,Panel2);
+    text(dc,L"LIVE BRIDGE TELEMETRY",54,390,360,24,small,Accent);
+    wchar_t data[1024]; std::swprintf(data,1024,L"Frames captured       %llu\nCompositions          %llu\nPFD writes            %llu\nHook failures         %llu\nProbe CPU             %.2f ms\nProbe maximum         %.2f ms",static_cast<unsigned long long>(sample.captures),static_cast<unsigned long long>(sample.composed),static_cast<unsigned long long>(sample.stamps),static_cast<unsigned long long>(sample.hook_failures),sample.probe_cpu_ms,sample.probe_max_ms);
+    text(dc,data,54,430,450,160,normal,Text,DT_LEFT|DT_WORDBREAK);
+    text(dc,live.empty()?L"No bridge message yet.":live.c_str(),540,430,470,120,small,Muted,DT_LEFT|DT_WORDBREAK);
   } else if (page == 5) {
-    panel(dc, 244, 138, 766, 118);
-    panel(dc, 244, 278, 766, 259);
-    text(dc, L"Nose-wheel view", 260, 150, 250, 30, heading);
-    const auto* guide_profile = profiles::find(draft().profile);
-    const bool nose_squares = (guide_profile ? guide_profile : &profiles::A380)->composition.square_nose_markers != 0;
-    text(dc, nose_squares ? L"Nose squares" : L"Nose dot", 260, 205, 225, 28, normal);
-    text(dc, L"Tail view", 260, 289, 250, 30, heading);
-    const wchar_t* labels[]{L"Upper endpoint", L"Outside corner", L"Inner endpoint"};
-    for (int i = 0; i < 3; ++i)
-      text(dc, labels[i], 260, 338 + i * 64, 233, 30, normal);
-    for (const int y : {176, 311}) {
-      text(dc, L"X from left (%)", 505, y, 139, 23, small, Muted);
-      text(dc, L"Y from top (%)", 655, y, 139, 23, small, Muted);
-    }
-    text(dc, L"X: 0–50%. Y: 0–100% of each camera view. The right guide mirrors the left.", 260, 551, 732, 26, small, Muted);
-    text(dc, L"Preview is temporary until saved. Reset restores guide positions and colour.", 260, 578, 732, 23, small, Muted);
-    auto preview = draft();
-    if (!read_fields(preview))
-      preview = draft();
-    const auto color = preview.guide_color;
-    const auto brush = CreateSolidBrush(RGB(UINT(color[0] * 255), UINT(color[1] * 255), UINT(color[2] * 255)));
-    const auto pen = CreatePen(PS_SOLID, scale(2), RGB(UINT(color[0] * 255), UINT(color[1] * 255), UINT(color[2] * 255)));
-    const auto old_brush = SelectObject(dc, brush), old_pen = SelectObject(dc, pen);
-    const auto point = [&](const std::array<float, 2>& value, bool right, int y, int height) {
-      return POINT{scale(817 + static_cast<int>(std::lround((right ? 1 - value[0] : value[0]) * 172))),
-                   scale(y + static_cast<int>(std::lround(value[1] * height)))};
-    };
-    const auto dot = [&](POINT p, int radius) {
-      Ellipse(dc, p.x - scale(radius), p.y - scale(radius), p.x + scale(radius), p.y + scale(radius));
-    };
-    text(dc, L"Mirrored preview", 811, 155, 183, 23, small, Muted);
-    for (const bool right : {false, true}) {
-      if (nose_squares) {
-        const auto nose = point(preview.nose_dot, right, 191, 45);
-        const RECT marker{nose.x - scale(7), nose.y - scale(7), nose.x + scale(7), nose.y + scale(7)};
-        FillRect(dc, &marker, brush);
-      } else {
-        dot(point(preview.nose_dot, right, 191, 45), 6);
-      }
-      const auto a = point(preview.tail_upper, right, 334, 158), b = point(preview.tail_corner, right, 334, 158),
-                 c = point(preview.tail_inner, right, 334, 158);
-      const POINT points[]{a, b, c};
-      Polyline(dc, points, 3);
-      dot(a, 3);
-      dot(b, 3);
-      dot(c, 3);
-    }
-    SelectObject(dc, old_brush);
-    SelectObject(dc, old_pen);
-    DeleteObject(brush);
-    DeleteObject(pen);
+    section(L"06 / GUIDES", L"Composition guides", L"Tune the visual guide markers used by the camera composition system.");
+    panel(dc,34,272,1034,350,Panel2); text(dc,L"LIVE COMPOSITION",54,292,300,26,heading); text(dc,L"NOSE-WHEEL VIEW",54,338,250,22,small,Accent); text(dc,L"TAIL VIEW",54,408,250,22,small,Accent); text(dc,L"X 0–50%   •   Y 0–100%",54,566,400,22,small,Muted);
+  } else if (page == 6) {
+    section(L"07 / ISSUES", L"Active bug reports", L"Live view of currently open issues from JoelScripts/A350-Improvements.");
+    panel(dc,34,272,1034,350,Panel2); text(dc,L"GITHUB ISSUE TRACKER",54,292,420,26,heading); text(dc,L"JoelScripts / A350-Improvements",54,326,450,20,small,Muted);
+    wchar_t count_label[64]; std::swprintf(count_label,64,L"%zu ACTIVE",github_issues.size()); badge(count_label,850,292,170,Accent);
+    if (github_issues.empty() && !github_issue_error.empty()) text(dc,github_issue_error.c_str(),54,380,900,60,normal,Muted,DT_LEFT|DT_WORDBREAK);
+    else if (github_issues.empty()) text(dc,L"Loading public bug reports…",54,380,600,28,normal,Muted);
+    else { github_issue_cards.clear(); int y=370, shown=0; for(int i=0;i<(int)github_issues.size()&&shown<5;++i){const auto& issue=github_issues[i]; panel(dc,54,y,990,46,issue.open?Card:Panel2); github_issue_cards.push_back(rectangle(54,y,990,46)); wchar_t n[32]; std::swprintf(n,32,L"#%d",issue.number); text(dc,n,66,y+7,50,24,small,Muted); auto t=widen(issue.title.c_str()); text(dc,t.c_str(),125,y+5,600,28,normal,Text,DT_LEFT|DT_SINGLELINE|DT_END_ELLIPSIS); text(dc,issue.open?(issue.in_progress?L"IN PROGRESS":L"OPEN"):L"RESOLVED",770,y+7,130,24,small,issue.open?(issue.in_progress?Amber:Text):Accent,DT_RIGHT); text(dc,L"VIEW",920,y+7,90,24,small,Accent,DT_RIGHT); y+=56; ++shown; } }
   }
-  text(dc, notice.c_str(), 248, 687, 382, 43, small, dirty ? Accent : Muted, DT_LEFT | DT_WORDBREAK);
+  // Bottom command/status strip.
+  fill(0, 790, 1440, 70, Deep); line(0,790,1440,790,Border);
+  text(dc,L"TAXICAM-FIXED",34,806,180,20,small,Accent); text(dc,L"D3D12  •  MSFS 2024  •  PRIVATE FLIGHT-DECK TOOL",34,829,430,18,small,Muted);
+  text(dc,notice.empty()?L"Ready":notice.c_str(),560,810,500,38,small,Muted,DT_RIGHT|DT_WORDBREAK);
 }
 
 DWORD WINAPI connection_worker(void*) {
@@ -1183,6 +1397,7 @@ DWORD WINAPI connection_worker(void*) {
           received_bridge_status = received_bridge_status || sample.heartbeat != 0;
         }
       }
+      service_diagnostics_watch(sample);
       PostMessageW(window, StatusMessage, 0, 0);
     }
     Sleep(200);
@@ -1218,6 +1433,66 @@ void check_updates(bool manual) {
     }
   }
 }
+void service_diagnostics_watch(const win::Status& sample) noexcept {
+  const auto now = GetTickCount64();
+  if (!diagnostic_watch.initialized) {
+    diagnostic_watch = {};
+    diagnostic_watch.initialized = true;
+    diagnostic_watch.last_heartbeat = sample.heartbeat;
+    diagnostic_watch.last_taxi_mask = sample.taxi_mask;
+    diagnostic_watch.last_captures = sample.captures;
+    diagnostic_watch.last_stamps = sample.stamps;
+    diagnostic_watch.last_event_ms = now;
+    TAXI_DIAG_EVENT("[TaxiCam-Fixed::Watchdog]", "WATCH-SESSION-START", "OBSERVED",
+                    "Companion diagnostics watchdog started.");
+    return;
+  }
+  if (sample.taxi_mask != diagnostic_watch.last_taxi_mask) {
+    char message[256]{};
+    std::snprintf(message, sizeof(message), "Taxi intent mask changed from %llu to %llu while the companion was connected.",
+                  static_cast<unsigned long long>(diagnostic_watch.last_taxi_mask),
+                  static_cast<unsigned long long>(sample.taxi_mask));
+    TAXI_DIAG_EVENT("[TaxiCam-Fixed::Camera]", "CAMERA-INTENT-CHANGED", "DETECTED", message);
+    diagnostic_watch.last_taxi_mask = sample.taxi_mask;
+  }
+  if ((sample.captures != diagnostic_watch.last_captures || sample.stamps != diagnostic_watch.last_stamps) &&
+      now - diagnostic_watch.last_progress_event_ms >= 1000) {
+    char message[256]{};
+    std::snprintf(message, sizeof(message), "Pipeline progress observed: captures=%llu stamps=%llu.",
+                  static_cast<unsigned long long>(sample.captures), static_cast<unsigned long long>(sample.stamps));
+    TAXI_DIAG_EVENT("[TaxiCam-Fixed::Pipeline]", "PIPELINE-PROGRESS", "OBSERVED", message);
+    diagnostic_watch.last_captures = sample.captures;
+    diagnostic_watch.last_stamps = sample.stamps;
+    diagnostic_watch.last_progress_event_ms = now;
+  }
+  if (sample.heartbeat) {
+    const auto age = now >= sample.heartbeat ? now - sample.heartbeat : 0;
+    if (age <= 5000) {
+      if (diagnostic_watch.stale_reported) {
+        TAXI_DIAG_WATCHDOG("[TaxiCam-Fixed::Watchdog]", "WATCHDOG-RECOVERED", "RECOVERED", age,
+                           "Heartbeat is fresh again; normal monitoring resumed.");
+        diagnostic_watch.stale_reported = false;
+      }
+    } else if (age > 5000 && !diagnostic_watch.stale_reported) {
+      TAXI_DIAG_WATCHDOG("[TaxiCam-Fixed::Watchdog]", "WATCHDOG-STALE", "DETECTED", age,
+                         "Record stale heartbeat and preserve the last known runtime state.");
+      diagnostic_watch.stale_reported = true;
+    }
+    diagnostic_watch.last_heartbeat = sample.heartbeat;
+  }
+  if (now - diagnostic_watch.last_event_ms >= 10000) {
+    const auto age = sample.heartbeat && now >= sample.heartbeat ? now - sample.heartbeat : 0;
+    char message[320]{};
+    std::snprintf(message, sizeof(message),
+                  "Health snapshot: heartbeat_age_ms=%llu taxi_mask=%llu captures=%llu stamps=%llu bridge=%s.",
+                  static_cast<unsigned long long>(age), static_cast<unsigned long long>(sample.taxi_mask),
+                  static_cast<unsigned long long>(sample.captures), static_cast<unsigned long long>(sample.stamps),
+                  sample.heartbeat ? "present" : "missing");
+    TAXI_DIAG_EVENT("[TaxiCam-Fixed::Watchdog]", "WATCHDOG-SNAPSHOT", "OBSERVED", message);
+    diagnostic_watch.last_event_ms = now;
+  }
+}
+
 void poll_updates() {
   if (preview_ui || update_prompt)
     return;
@@ -1388,8 +1663,8 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
       if (item->CtlType != ODT_BUTTON)
         break;
       const int id = static_cast<int>(item->CtlID);
-      const bool selected = (id >= 100 && id < 106 && id - 100 == page) || is_on(id, draft());
-      HBRUSH surround = CreateSolidBrush((id >= 100 && id < 106) || id == 512 || id == 513 || id == 514 ? Sidebar : Background);
+      const bool selected = (id >= 100 && id < 107 && id - 100 == page) || is_on(id, draft());
+      HBRUSH surround = CreateSolidBrush((id >= 100 && id < 107) || id == 512 || id == 513 || id == 514 ? Sidebar : Background);
       FillRect(item->hDC, &item->rcItem, surround);
       DeleteObject(surround);
       if (id == 514) {
@@ -1485,6 +1760,15 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
                  LOWORD(l) == WM_LBUTTONDBLCLK)
         show();
       return 0;
+    case WM_LBUTTONUP: {
+      if (page == 6) {
+        const POINT point{static_cast<LONG>(LOWORD(l)), static_cast<LONG>(HIWORD(l))};
+        for (size_t i = 0; i < github_issue_cards.size(); ++i) {
+          if (PtInRect(&github_issue_cards[i], point)) { open_github_issue(static_cast<int>(i)); return 0; }
+        }
+      }
+      break;
+    }
     case WM_COMMAND: {
       const int id = LOWORD(w);
       if (refreshing)
@@ -1502,7 +1786,7 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
         dirty_notice();
         return 0;
       }
-      if (id >= 100 && id < 106) {
+      if (id >= 100 && id < 107) {
         auto s = draft();
         const wchar_t* field_error{};
         if (!read_fields(s, &field_error)) {
@@ -1513,8 +1797,12 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
         publish(s);
         page = id - 100;
         build_controls();
+        if (page == 6 && github_issues.empty()) refresh_github_issues(false);
         return 0;
       }
+      if (id == GithubRefreshId) { refresh_github_issues(true); return 0; }
+      if (id == GithubOpenId) { ShellExecuteA(hwnd, "open", win::BugReportRepository.data(), nullptr, nullptr, SW_SHOWNORMAL); return 0; }
+      if (id == GithubReportId) { report_bug(); return 0; }
       if (id == 602) {
         PostMessageW(hwnd, TrayMessage, 0, WM_CONTEXTMENU);
         return 0;
@@ -1724,6 +2012,22 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
       }
       if (id == 510) {
         ShellExecuteW(hwnd, L"open", win::settings_directory().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return 0;
+      }
+      if (id == 515) {
+        open_diagnostic_file(win::advanced_diagnostics::summary_path, L"diagnostics-summary.txt");
+        return 0;
+      }
+      if (id == 516) {
+        open_diagnostic_file(win::advanced_diagnostics::readable_path, L"advanced-diagnostics.log");
+        return 0;
+      }
+      if (id == 517) {
+        open_diagnostic_file(win::advanced_diagnostics::events_path, L"advanced-diagnostics.jsonl");
+        return 0;
+      }
+      if (id == 518) {
+        open_diagnostic_file(win::advanced_diagnostics::state_path, L"advanced-state.txt");
         return 0;
       }
       if (id == 511) {

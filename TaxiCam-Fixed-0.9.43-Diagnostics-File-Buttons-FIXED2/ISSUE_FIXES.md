@@ -28,3 +28,40 @@ This tree starts from the supplied upstream `taxi-cam-main(3).zip` baseline and 
 This is a source-level fix candidate. The simulator, GPU drivers, ReShade/DLSS/Frame Generation combinations and aircraft cannot be executed in this build environment, so the issues are not claimed as independently hardware-verified here.
 
 Recommended first test: build this tree, load the iniBuilds A350-1000, activate TAXI, and confirm that live PFD output still works. Then test a landing/re-activation cycle and, separately, ReShade/DLSS/Frame Generation.
+
+
+## 0.9.30 diagnostics upgrade
+
+- Added structured `%LOCALAPPDATA%\TaxiCam-Fixed\diagnostics.log`.
+- Added module/severity/error-code/source-file/function/line fields.
+- Bridge status events now carry their actual call-site source location.
+- Added an explicit D3D12 initialization failure event.
+- Diagnostics distinguish observed failure locations from root-cause claims.
+- Diagnostics are best-effort and are designed never to interrupt simulator operation.
+
+
+## 0.9.31 — Detailed diagnostics layer
+
+- Added session-correlated human-readable diagnostic events.
+- Added companion watchdog health snapshots and stale-heartbeat/recovery events.
+- Added observable Taxi intent transition events without claiming a specific external input source.
+- Added pipeline progress events for capture/stamp changes.
+- Preserved the existing low-level bridge diagnostics and failure evidence.
+- Diagnostics remain observational and do not assert root cause from timing alone.
+
+
+## 0.9.32 — GitHub Bug Reports UI
+- Added a read-only GitHub bug-report browser to the companion UI.
+- Uses the public `JoelScripts/A350-Improvements` Issues API endpoint.
+- Filters pull requests because GitHub's Issues API can return both issues and pull requests.
+- Added refresh/open/report actions without embedding GitHub write credentials.
+
+## 0.9.39
+
+- Fixed the unused `W` local in `src/app/companion.cpp` that caused the Windows companion build to fail under `-Werror`.
+- Preserved the 0.9.38 fresh UI redesign and existing features.
+
+
+## 0.9.41 — Approved fresh UI
+- Retains the fresh-canvas UI layout from 0.9.40.
+- No TaxiCam camera/PFD engine changes.

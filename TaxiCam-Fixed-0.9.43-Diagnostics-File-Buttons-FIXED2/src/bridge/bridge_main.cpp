@@ -9,6 +9,8 @@
 #include "../graphics/taxi_button_routes.hpp"
 #include "../hooks/render_boundary_observer.hpp"
 #include "../shared/companion_control.hpp"
+#include "../shared/diagnostics.hpp"
+#include "../shared/advanced_diagnostics.hpp"
 #include "../shared/protocol.hpp"
 #include "../shared/rotating_log.hpp"
 #include "../shared/scene_demand.hpp"
@@ -21,7 +23,8 @@ namespace {
 using namespace taxi_camera;
 namespace win = standalone;
 std::atomic<bool> started{};
-void log_status(const win::Status& s, const char* detail = "") noexcept {
+void log_status(const win::Status& s, const char* detail, const char* source_file, const char* source_function,
+                int source_line) noexcept {
   try {
     wchar_t directory[32768]{};
     const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", directory, 32768);
@@ -35,17 +38,36 @@ void log_status(const win::Status& s, const char* detail = "") noexcept {
     const auto length = std::snprintf(
         line, sizeof(line),
         "%llu pid=%lu tid=%lu native=%u scene=%u mask=%u left=%llu right=%llu captured=%llu composed=%llu stamps=%llu "
-        "hooks_failed=%llu cutoff=%u | %s | %s\r\n",
+        "hooks_failed=%llu cutoff=%u | %s | %s | source=%s::%s:%d\r\n",
         static_cast<unsigned long long>(GetTickCount64()), GetCurrentProcessId(), GetCurrentThreadId(), s.graphics_ready, s.scene_ready,
         s.taxi_mask, static_cast<unsigned long long>(s.left_id), static_cast<unsigned long long>(s.right_id),
-        static_cast<unsigned long long>(s.captures), static_cast<unsigned long long>(s.composed), static_cast<unsigned long long>(s.stamps),
-        static_cast<unsigned long long>(s.hook_failures), s.speed_inhibited, s.message, detail);
+        static_cast<unsigned long long>(s.captures), static_cast<unsigned long long>(s.composed),
+        static_cast<unsigned long long>(s.stamps), static_cast<unsigned long long>(s.hook_failures),
+        s.speed_inhibited, s.message, detail ? detail : "", source_file ? source_file : "",
+        source_function ? source_function : "", source_line);
     if (length > 0 && static_cast<size_t>(length) < sizeof(line))
       win::append_rotating_log(path, std::string_view(line, static_cast<std::size_t>(length)), win::BridgeLogBytes);
+
+    char structured[1024];
+    const auto structured_length = std::snprintf(
+        structured, sizeof(structured),
+        "native=%u scene=%u mask=%u left=%llu right=%llu captured=%llu composed=%llu stamps=%llu hooks_failed=%llu cutoff=%u message=%s detail=%s",
+        s.graphics_ready, s.scene_ready, s.taxi_mask,
+        static_cast<unsigned long long>(s.left_id), static_cast<unsigned long long>(s.right_id),
+        static_cast<unsigned long long>(s.captures), static_cast<unsigned long long>(s.composed),
+        static_cast<unsigned long long>(s.stamps), static_cast<unsigned long long>(s.hook_failures),
+        s.speed_inhibited, s.message, detail ? detail : "");
+    if (structured_length > 0 && static_cast<size_t>(structured_length) < sizeof(structured)) {
+      TAXI_DIAG_INFO("[TaxiCam-Fixed::Log]", "BRIDGE-STATUS", structured);
+    }
+    win::advanced_diagnostics::event("bridge.status", detail ? detail : "", "bridge", source_file, source_line, source_function, &s);
   } catch (...) {
     // Diagnostics must not interrupt bridge operation.
   }
 }
+#define TAXI_LOG_STATUS(status_value, detail_value) \
+  log_status((status_value), (detail_value), __FILE__, __func__, __LINE__)
+
 struct StartupTiming {
   unsigned intent_mask{}, attempts{};
   bool observed{}, target_ready{}, output_ready{}, stamped{}, waiting_logged{};
@@ -68,25 +90,28 @@ void log_startup(const win::Status& status, const StartupTiming& timing, const c
                 static_cast<unsigned long long>(timing.output_ms), static_cast<unsigned long long>(timing.stamp_ms),
                 static_cast<unsigned long long>(timing.output_ready ? timing.output_ms - timing.intent_ms : 0),
                 static_cast<unsigned long long>(timing.stamped ? timing.stamp_ms - timing.intent_ms : 0));
-  log_status(status, detail);
+  TAXI_LOG_STATUS(status, detail);
 }
 DWORD run_impl() {
   win::Mailbox mailbox;
   if (!mailbox.open(GetCurrentProcessId(), false))
     return ERROR_INVALID_DATA;
   win::Status status{};
-  log_status(status, "Bridge worker started.");
+  win::advanced_diagnostics::initialize("bridge");
+  TAXI_LOG_STATUS(status, "Bridge worker started.");
   const bool fault_evidence_ready = win::crash_evidence::initialize();
-  log_status(status, fault_evidence_ready ? "Renderer fault evidence armed." : "Renderer fault evidence unavailable.");
+  TAXI_LOG_STATUS(status, fault_evidence_ready ? "Renderer fault evidence armed." : "Renderer fault evidence unavailable.");
   if (const auto* capture = win::crash_evidence::code_capture) {
     char capture_detail[256];
     std::snprintf(capture_detail, sizeof(capture_detail),
                   "Renderer fault site code capture: written=%u searched=%u fault_rva=0x%X window_rva=0x%X window_bytes=%u error=%s",
                   capture->written, capture->searched, capture->match_rva, capture->window_rva, capture->window_bytes, capture->error);
-    log_status(status, capture_detail);
+    TAXI_LOG_STATUS(status, capture_detail);
   }
-  log_status(status, "Native graphics initialization started.");
+  TAXI_LOG_STATUS(status, "Native graphics initialization started.");
   if (!win::initialize_graphics()) {
+    TAXI_DIAG_ERROR("[TaxiCam-Fixed::D3D12]", "D3D12-INIT-FAILED",
+                    "Native graphics initialization returned false; inspect the graphics status immediately below.");
     const auto graphics = win::graphics_status();
     std::snprintf(status.message, sizeof(status.message), "Native graphics refused: %s", graphics.error);
     status.hook_failures = graphics.hook_failures;
@@ -95,10 +120,10 @@ DWORD run_impl() {
       mailbox.data()->status = status;
       mailbox.unlock();
     }
-    log_status(status);
+    TAXI_LOG_STATUS(status, status.message);
     return ERROR_NOT_SUPPORTED;
   }
-  log_status(status, "Native graphics initialization completed.");
+  TAXI_LOG_STATUS(status, "Native graphics initialization completed.");
   const auto key = win::graphics_status().device;
   wchar_t gpu_timing_option[2]{};
   const bool gpu_timing = GetEnvironmentVariableW(L"TAXI_CAM_GPU_TIMING", gpu_timing_option, 2) == 1 && gpu_timing_option[0] == L'1';
@@ -170,7 +195,7 @@ DWORD run_impl() {
       prewarm = {};
       startup = warmup_startup = {};
       route_request = 0;
-      log_status(status, "Connection stopped: camera output closed; next Connect will rescan and set up again.");
+      TAXI_LOG_STATUS(status, "Connection stopped: camera output closed; next Connect will rescan and set up again.");
     }
     const auto session_epoch = native_camera::get_aircraft_session_epoch();
     const auto session = native_camera::get_aircraft_session_readiness();
@@ -268,7 +293,7 @@ DWORD run_impl() {
                         static_cast<unsigned long long>(transition.created_total), pending_full_reset,
                         static_cast<unsigned long long>(pending_gpu_generation), public_ready, transition_session.loading,
                         transition_session.flow_subscribed, transition_session.last_flow_event, transition_session.error);
-          log_status(pending, detail);
+          TAXI_LOG_STATUS(pending, detail);
           next_log = now + 5000;
         }
         service_scene();
@@ -296,7 +321,7 @@ DWORD run_impl() {
           static_cast<unsigned long long>(transition.pair.owned_ids[0]), static_cast<unsigned long long>(transition.pair.owned_ids[1]),
           static_cast<unsigned long long>(applied_connection), pending_full_reset, static_cast<unsigned long long>(pending_gpu_generation),
           transition_session.ready, transition_session.loading, transition_session.flow_subscribed, transition_session.last_flow_event);
-      log_status(status, transition_detail);
+      TAXI_LOG_STATUS(status, transition_detail);
       applied_mounts = {};
       intent = {};
       progress = {};
@@ -401,7 +426,7 @@ DWORD run_impl() {
             static_cast<unsigned long long>(
                 warm_output.completed_frames >= prewarm.baseline_pairs() ? warm_output.completed_frames - prewarm.baseline_pairs() : 0),
             static_cast<unsigned long long>(win::ScenePrewarm::RequiredPairs));
-        log_status(status, detail);
+        TAXI_LOG_STATUS(status, detail);
       }
     }
     const auto demand = win::scene_demand(mask, test_scene, assigned, requested, failed, background_warmup);
@@ -485,7 +510,7 @@ DWORD run_impl() {
         warm_start_allowed = prewarm.observe(GetTickCount64(), warm_readiness().eligible(), false,
                                              {false, false, warm_output.frames, warm_output.completed_frames}, !prepared);
         if (!warm_start_allowed)
-          log_status(status, "Prewarm preparation ended without a native request; eligibility or budget was lost.");
+          TAXI_LOG_STATUS(status, "Prewarm preparation ended without a native request; eligibility or budget was lost.");
       }
       if (prepared && warm_start_allowed) {
         start_timing.request_begin_ms = GetTickCount64();
@@ -553,9 +578,11 @@ DWORD run_impl() {
       // wipe source-state without new RT barriers; rearm retained RT models
       // so later draws can capture again. Never erase/recreate cameras here.
       if (progress.observe(now, eligible, output.frames, output.capture.source_draws,
-                           std::strcmp(output.capture.tail_status, "unknown_source_state") == 0))
+                           std::strcmp(output.capture.tail_status, "unknown_source_state") == 0)) {
         scene_runtime::manager().rearm_source_states();
-      next_recovery = now + 250;
+        win::advanced_diagnostics::event("watchdog.capture_progress_recovery", "Capture progress watchdog detected a sustained stall; retained camera state rearmed", "bridge", __FILE__, __LINE__, __func__, &status);
+        next_recovery = now + 250;
+      }
     }
     const auto graphics = win::graphics_status();
     status = {};
@@ -688,7 +715,7 @@ DWORD run_impl() {
                       "Aircraft identity: session=%llu selected=%u detected=%u fresh=%u type=%.255s path=%.259s",
                       static_cast<unsigned long long>(session_epoch), applied_profile, identity.detected_profile, identity.fresh,
                       identity.type.data(), identity.path.data());
-        log_status(status, identity_detail);
+        TAXI_LOG_STATUS(status, identity_detail);
       }
       char detail[1536];
       const auto boundaries = engine_hook::render_boundary::statistics();
@@ -730,19 +757,19 @@ DWORD run_impl() {
                     scene.stop_reason != native_camera::SceneStopReason::none ? scene.stop_detail.c_str()
                     : !scene.pair.owned_ids[0] && !scene.pair.owned_ids[1]      ? scene.message.c_str()
                                                                                 : "");
-      log_status(status, detail);
+      TAXI_LOG_STATUS(status, detail);
       char selection_detail[256];
       std::snprintf(selection_detail, sizeof(selection_detail),
                     "PFD selection: automatic=%u candidates=%zu last_result=%s requested=%llu/%llu", settings.auto_detect, inventory.size(),
                     graphics.target_detection, static_cast<unsigned long long>(settings.left_id),
                     static_cast<unsigned long long>(settings.right_id));
-      log_status(status, selection_detail);
+      TAXI_LOG_STATUS(status, selection_detail);
       char control_detail[256];
       std::snprintf(control_detail, sizeof(control_detail),
                     "Control loop timing: discovery_max_ms=%llu service_max_ms=%llu observed_loop_max_ms=%llu",
                     static_cast<unsigned long long>(discovery_max_ms), static_cast<unsigned long long>(service_max_ms),
                     static_cast<unsigned long long>(loop_max_ms));
-      log_status(status, control_detail);
+      TAXI_LOG_STATUS(status, control_detail);
       char candidate_detail[1024] = "PFD candidate activity (id:draws/completions):";
       std::size_t candidate_used = std::strlen(candidate_detail);
       for (std::size_t i = 0; i < std::min<std::size_t>(inventory.size(), 16); ++i) {
@@ -754,7 +781,7 @@ DWORD run_impl() {
           break;
         candidate_used += static_cast<std::size_t>(written);
       }
-      log_status(status, candidate_detail);
+      TAXI_LOG_STATUS(status, candidate_detail);
       char pfd_detail[640];
       std::snprintf(pfd_detail, sizeof(pfd_detail),
                     "PFD copy admission: selected_draws=%llu rt_metadata=%llu rt_callbacks=%llu pending_matches=%llu "
@@ -770,7 +797,7 @@ DWORD run_impl() {
                     static_cast<unsigned long long>(output.state_skips), static_cast<unsigned long long>(boundaries.batch_refusals),
                     static_cast<unsigned long long>(boundaries.pass_refusals), static_cast<unsigned long long>(graphics.queue_patch_plans),
                     static_cast<unsigned long long>(output.capture.display_copies), graphics.copy_error);
-      log_status(status, pfd_detail);
+      TAXI_LOG_STATUS(status, pfd_detail);
       // Fixed-size counters only on submission threads; formatting and bounded
       // rotating-file output stay on this existing five-second control cadence.
       const auto log_counters = [&](const char* label, const auto& counters, const auto& name) {
@@ -786,7 +813,7 @@ DWORD run_impl() {
             break;
           used += static_cast<std::size_t>(written);
         }
-        log_status(status, detail);
+        TAXI_LOG_STATUS(status, detail);
       };
       log_counters("PFD queue admission", graphics.queue_outcomes,
                    [](unsigned i) { return win::display_submission_outcome_name(static_cast<win::DisplaySubmissionOutcome>(i)); });
@@ -814,7 +841,7 @@ DWORD run_impl() {
                     static_cast<unsigned long long>(graphics.selected_exit_split),
                     static_cast<unsigned long long>(graphics.calibration_clears), settings.follow_taxi, settings.manual_mask,
                     settings.calibration_mask);
-      log_status(status, scope_detail);
+      TAXI_LOG_STATUS(status, scope_detail);
       char draw_detail[384];
       std::snprintf(
           draw_detail, sizeof(draw_detail),
@@ -824,7 +851,7 @@ DWORD run_impl() {
           static_cast<unsigned long long>(graphics.fallback_query_refused),
           static_cast<unsigned long long>(graphics.fallback_state_refused), static_cast<unsigned long long>(graphics.recording_end_draws),
           static_cast<unsigned long long>(graphics.shader_deferred), static_cast<unsigned long long>(graphics.close_forward_refused));
-      log_status(status, draw_detail);
+      TAXI_LOG_STATUS(status, draw_detail);
       char retention_detail[640];
       std::snprintf(
           retention_detail, sizeof(retention_detail),
@@ -839,7 +866,7 @@ DWORD run_impl() {
           static_cast<unsigned long long>(scene.flags[1][0]), static_cast<unsigned long long>(scene.flags[1][1]),
           static_cast<unsigned long long>(scene.aa_restores), static_cast<unsigned long long>(scene.aa_restore_failures),
           scene.aa_cleared_pending);
-      log_status(status, retention_detail);
+      TAXI_LOG_STATUS(status, retention_detail);
       if (graphics_diagnostics) {
         char graphics_detail[512];
         std::snprintf(
@@ -851,7 +878,7 @@ DWORD run_impl() {
             static_cast<unsigned long long>(graphics.list_lookup_calls), static_cast<unsigned long long>(graphics.list_cache_hits),
             static_cast<unsigned long long>(graphics.list_registry_lookups), static_cast<unsigned long long>(graphics.idle_state_bypasses),
             static_cast<unsigned long long>(graphics.idle_callback_bypasses));
-        log_status(status, graphics_detail);
+        TAXI_LOG_STATUS(status, graphics_detail);
       }
       if (output.gpu_timing_enabled) {
         const auto log_gpu_span = [&](const char* name, const GpuTimingStatistics& timing) {
@@ -859,7 +886,7 @@ DWORD run_impl() {
           std::snprintf(gpu_detail, sizeof(gpu_detail), "GPU timing: stage=%s samples=%llu rejected=%llu total_ms=%.6f max_ms=%.6f", name,
                         static_cast<unsigned long long>(timing.samples), static_cast<unsigned long long>(timing.rejected), timing.total_ms,
                         timing.maximum_ms);
-          log_status(status, gpu_detail);
+          TAXI_LOG_STATUS(status, gpu_detail);
         };
         log_gpu_span("private_capture_copy", output.capture.capture_copy_gpu);
         log_gpu_span("composition", output.composition_gpu);
@@ -876,14 +903,15 @@ DWORD run_impl() {
                     static_cast<unsigned long long>(graphics.dynamic_depth_bias_calls),
                     static_cast<unsigned long long>(graphics.dynamic_strip_cut_calls),
                     static_cast<unsigned long long>(graphics.sample_position_calls));
-      log_status(status, copy_detail);
+      TAXI_LOG_STATUS(status, copy_detail);
       if (!logged || status.active_profile != last_logged.active_profile || std::strcmp(status.aircraft_type, last_logged.aircraft_type) ||
           std::strcmp(status.aircraft_path, last_logged.aircraft_path)) {
         char identity_detail[640];
         std::snprintf(identity_detail, sizeof(identity_detail), "Aircraft identity: type=%.255s | path=%.259s | detected=%u",
                       status.aircraft_type, status.aircraft_path, status.detected_profile);
-        log_status(status, identity_detail);
+        TAXI_LOG_STATUS(status, identity_detail);
       }
+      win::advanced_diagnostics::state_snapshot(status, "periodic");
       last_logged = status;
       last_connected = connected;
       last_requested = requested;

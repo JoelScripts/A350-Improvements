@@ -7,7 +7,9 @@
 #include "../shared/protocol.hpp"
 
 namespace taxi_camera::standalone {
-inline constexpr std::string_view BugReportPage = "https://github.com/rthoms334/taxi-cam/issues/new?template=bug_report.yml";
+inline constexpr std::string_view BugReportPage = "https://github.com/JoelScripts/A350-Improvements/issues/new?template=bug_report.yml";
+inline constexpr std::string_view BugReportRepository = "https://github.com/JoelScripts/A350-Improvements";
+inline constexpr std::string_view BugReportApi = "https://api.github.com/repos/JoelScripts/A350-Improvements/issues";
 inline constexpr size_t BugReportSnapshotLimit = 2200, BugReportUrlLimit = 7500;
 inline constexpr std::uint64_t BugReportFreshMs = 3000;
 
