@@ -1,64 +1,349 @@
-# TaxiCam-Fixed
+name: 🐛 TaxiCam-Fixed Bug Report
+description: Report a problem with TaxiCam-Fixed so it can be investigated.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
 
-## What is this?
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🐛 TaxiCam-Fixed Bug Report
 
-**TaxiCam-Fixed is an improved version of the original Taxi Cam project.**
+        Thanks for taking the time to report a problem.
 
-The starting point for this project is the original Taxi Cam by Robert Thomson:
+        Please provide as much information as possible. The more detail you provide, the easier it is to reproduce and investigate the issue.
 
-https://github.com/rthoms334/taxi-cam
+        **Please search the existing issues before submitting a new report.**
 
-The original project already provides the functionality this project is based on, including the A350 Taxi Cam/PFD implementation.
+        ---
 
-This project is **not pretending to be a completely original Taxi Cam implementation**. It is a development project based on the existing Taxi Cam code, with the goal of improving it, fixing reported problems, improving stability, and addressing issues found during testing.
+        ## 📋 IMPORTANT — Diagnostic log required
 
-## What is different about TaxiCam-Fixed?
+        **Please include your TaxiCam diagnostic log with this report.**
 
-Joel is working on this version with the goal of making the existing Taxi Cam implementation **better, more stable, and more reliable**.
+        The easiest way to find it is:
 
-The development focus includes:
+        1. Open **TaxiCam-Fixed**.
+        2. Open **Diagnostics**.
+        3. Click **Open log folder**.
+        4. Attach the relevant log file to the **TaxiCam diagnostic information** box below by dragging and dropping it there.
 
-- Fixing known bugs and crashes.
-- Improving stability.
-- Improving diagnostics and logging.
-- Making problems easier to identify and troubleshoot.
-- Fixing issues found during real-world MSFS 2024/A350 testing.
-- Improving recovery from graphics, camera, and simulator problems.
-- Preserving the working Taxi Cam/PFD functionality while making targeted improvements.
+        You can also open the folder manually by pasting this into Windows File Explorer:
 
-Changes are being tested locally before they are considered ready.
+        `%LOCALAPPDATA%\Taxi Cam`
 
-## Bug Reports
+        Depending on the TaxiCam-Fixed build, you may also see:
 
-**Please do not report bugs with the original Taxi Cam to this repository.**
+        `%LOCALAPPDATA%\TaxiCam-Fixed`
 
-If you are using **Joel's TaxiCam-Fixed version** and find a bug, please report it here:
+        Look for files such as:
 
-https://github.com/JoelScripts/A350-Improvements/issues
+        - `diagnostics-summary.txt` — **start here; easiest file to read**
+        - `advanced-diagnostics.log` — human-readable detailed event log
+        - `advanced-diagnostics.jsonl` — detailed machine-readable diagnostics
+        - `diagnostics.log` — diagnostic session log
+        - `bridge.log` — MSFS graphics bridge log
 
-When reporting a bug with TaxiCam-Fixed, please include as much information as possible, such as:
+        **If TaxiCam-Fixed crashed or MSFS froze, please attach the log covering the time of the incident.**
 
-- What happened.
-- What aircraft you were using.
-- What you were doing immediately before the problem.
-- Whether Taxi Cam was active.
-- Any crash information.
-- Relevant TaxiCam-Fixed logs.
-- Screenshots or videos where useful.
+        If you cannot find the log, say so in the diagnostic field rather than submitting an empty report.
 
-## Original Project
+        **Please remove/redact any personal information before attaching logs.**
 
-The original Taxi Cam project can be found here:
+  - type: checkboxes
+    id: existing-issues
+    attributes:
+      label: Existing issues
+      description: Please confirm that you have searched the existing issues for the same or a very similar problem.
+      options:
+        - label: I have searched the existing issues and could not find the same problem.
+          required: true
+    validations:
+      required: true
 
-https://github.com/rthoms334/taxi-cam
+  - type: dropdown
+    id: problem-type
+    attributes:
+      label: What type of problem are you reporting?
+      description: Select the option that best describes what happened.
+      options:
+        - MSFS freezes
+        - MSFS crashes
+        - PFD is blank or not displaying Taxi Cam
+        - Nose camera does not work
+        - Tail camera does not work
+        - Camera transition / camera view problem
+        - TAXI button or activation problem
+        - Performance / FPS problem
+        - Visual corruption / graphical problem
+        - Startup / initialization problem
+        - Other
+      default: 0
+    validations:
+      required: true
 
-Please refer to the original project for the original implementation, documentation, licensing, and attribution.
+  - type: dropdown
+    id: aircraft
+    attributes:
+      label: Aircraft
+      description: Which aircraft were you using when the problem occurred?
+      options:
+        - iniBuilds A350-1000
+        - iniBuilds A350-900
+        - iniBuilds A350-900 ULR
+        - Other
+      default: 0
+    validations:
+      required: true
 
-## TaxiCam-Fixed
+  - type: dropdown
+    id: when-occurred
+    attributes:
+      label: When did the problem occur?
+      description: Select the point in the Taxi Cam session when the problem happened.
+      options:
+        - During TaxiCam startup
+        - When pressing TAXI
+        - When enabling the nose camera
+        - When enabling the tail camera
+        - When changing the MSFS camera view
+        - When using ChasePlane
+        - When opening the MSFS toolbar
+        - When loading or reloading the flight
+        - After landing
+        - During normal TaxiCam operation
+        - Other
+      default: 0
+    validations:
+      required: true
 
-**Developer:** Joel
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does the problem happen?
+      options:
+        - Every time
+        - Most of the time
+        - Sometimes
+        - Rarely
+        - Happened once
+        - Not sure
+      default: 0
+    validations:
+      required: true
 
-**Purpose:** An improved and actively developed version of the existing Taxi Cam implementation.
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Can you reproduce the problem?
+      options:
+        - Yes, every time
+        - Yes, sometimes
+        - No
+        - Not sure
+      default: 0
+    validations:
+      required: true
 
-**Bug reports for this version:**  
-https://github.com/JoelScripts/A350-Improvements/issues
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe exactly what you saw or experienced.
+      placeholder: |
+        Example:
+        MSFS freezes when I press my ChasePlane camera shortcut while TaxiCam is active.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: Describe what you expected TaxiCam or MSFS to do instead.
+      placeholder: |
+        Example:
+        The ChasePlane camera should change normally and TaxiCam should continue running.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Please list the steps that cause the problem.
+      placeholder: |
+        1. Start MSFS 2024
+        2. Load the iniBuilds A350
+        3. Start TaxiCam-Fixed
+        4. Press TAXI
+        5. Change camera view
+        6. MSFS freezes
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: camera-affected
+    attributes:
+      label: Camera / PFD affected
+      description: Select everything that applies.
+      options:
+        - label: Nose camera
+        - label: Tail camera
+        - label: Left PFD
+        - label: Right PFD
+        - label: Both PFDs
+        - label: MSFS external camera
+        - label: ChasePlane camera
+
+  - type: checkboxes
+    id: external-software
+    attributes:
+      label: Other software in use
+      description: Select everything that was active when the problem occurred.
+      options:
+        - label: ChasePlane
+        - label: ReShade
+        - label: NVIDIA DLSS
+        - label: Frame Generation
+        - label: Other camera software
+        - label: Other graphics / overlay software
+        - label: None
+
+  - type: input
+    id: taxicam-version
+    attributes:
+      label: TaxiCam-Fixed version
+      description: Enter the version shown by TaxiCam-Fixed.
+      placeholder: "Example: 0.9.30"
+    validations:
+      required: true
+
+  - type: input
+    id: msfs-version
+    attributes:
+      label: Microsoft Flight Simulator 2024 version
+      description: Enter your MSFS 2024 version if known.
+      placeholder: "Example: 1.8.16.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Enter your Windows version if known.
+      placeholder: "Example: Windows 11 25H2"
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      description: Enter your graphics card model.
+      placeholder: "Example: NVIDIA GeForce RTX 4090"
+
+  - type: input
+    id: driver
+    attributes:
+      label: GPU driver version
+      description: Enter your NVIDIA/AMD/Intel graphics driver version if known.
+      placeholder: "Example: NVIDIA 581.xx"
+
+  - type: dropdown
+    id: graphics-api
+    attributes:
+      label: Graphics API
+      description: Which graphics API is MSFS using?
+      options:
+        - D3D12
+        - D3D11
+        - Not sure
+      default: 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: recent-changes
+    attributes:
+      label: Did anything change before the problem started?
+      description: Mention recent TaxiCam, MSFS, aircraft, Windows, GPU driver, ChasePlane, ReShade, DLSS, or Frame Generation updates if applicable.
+      placeholder: |
+        Example:
+        The problem started after updating MSFS / ChasePlane / TaxiCam.
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 📋 TaxiCam diagnostic log — REQUIRED
+      description: |
+        Please attach your diagnostic log here by dragging and dropping the file into this box.
+
+        Find it in TaxiCam-Fixed → Diagnostics → Open log folder.
+
+        The folder is normally:
+        %LOCALAPPDATA%\Taxi Cam
+
+        Depending on the build, also check:
+        %LOCALAPPDATA%\TaxiCam-Fixed
+
+        Prefer attaching diagnostics-summary.txt first. If available, also attach advanced-diagnostics.log, advanced-diagnostics.jsonl, diagnostics.log and/or bridge.log.
+
+        For crashes or freezes, attach the log from the same session in which the problem occurred.
+
+        If you genuinely cannot find a log, write "LOG NOT FOUND" and explain what you checked.
+      placeholder: |
+        Drag and drop the diagnostic log file here.
+
+        Or paste the relevant section of the log below.
+
+        IMPORTANT:
+        - Include the time the problem occurred if possible.
+        - Do not remove the surrounding error/warning/recovery entries.
+        - Redact personal information if any is present.
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: diagnostic-check
+    attributes:
+      label: Diagnostic log confirmation
+      description: This helps make sure the report contains the information needed for investigation.
+      options:
+        - label: I have attached or pasted the TaxiCam diagnostic information, or I have explained why the log could not be provided.
+          required: true
+    validations:
+      required: true
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Screenshots, videos, crash evidence, or other files
+      description: Drag and drop additional screenshots, videos, crash evidence files, or other relevant files here.
+      placeholder: |
+        Drag and drop additional files here, if available.
+
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional information
+      description: Anything else that may help reproduce or investigate the problem.
+      placeholder: |
+        Add anything else that you think may be relevant.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: final-check
+    attributes:
+      label: Final check
+      options:
+        - label: I have provided as much information as I can and understand that more information may be requested.
+          required: true
+    validations:
+      required: true
