@@ -1,0 +1,187 @@
+name: Windows build and release
+
+on:
+  push:
+    branches: [main]
+    # Build only when code or inputs to the shipped build change.
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'installer/**'
+      - 'ci/**'
+      - 'bootstrap.ps1'
+      - 'build.ps1'
+      - 'smoke-test.ps1'
+      - 'dependencies.json'
+      - 'version.json'
+      - 'taxi-camera-mounts.cfg'
+      - 'licenses/native-runtime-notices.txt'
+      - 'LICENSE'
+      - '.github/workflows/release.yml'
+      - '!**/*.md'
+      - '!**/.clang-format'
+      - '!**/.gitignore'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and validate
+    outputs:
+      artifact_name: ${{ steps.candidate_info.outputs.artifact_name }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out the exact pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test semantic version progression
+        run: ./ci/version_test.ps1
+
+      - name: Test release note rollup
+        run: ./ci/release_notes_test.ps1
+
+      - name: Test publish tags on main
+        run: ./ci/publish_tag_test.ps1
+
+      - name: Cache verified compiler archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/deps/llvm-mingw.zip
+          key: windows-2025-llvm-${{ hashFiles('dependencies.json') }}
+
+      - name: Bootstrap pinned compiler
+        run: ./bootstrap.ps1
+
+      - name: Build and validate with software D3D12
+        run: |
+          Start-Transcript -Path build/ci-validation.log
+          try {
+            ./build.ps1 -Validate -WarpOnly
+            ./smoke-test.ps1
+            ./tests/installer/prerequisites_test.ps1
+            ./tests/installer/install_test.ps1
+            ./tests/installer/settings_test.ps1
+            ./tests/installer/package_test.ps1
+          } finally {
+            Stop-Transcript
+          }
+
+      - name: Package validated release
+        id: package
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          $zip = ./installer/package.ps1 -BuildLabel "build.$env:BUILD_NUMBER" -SourceCommit $env:SOURCE_COMMIT
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw 'Release ZIP missing.' }
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+
+      - name: Build Windows installer
+        id: installer
+        env:
+          RELEASE_ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          ./installer/bootstrap.ps1
+          $setup = ./installer/build.ps1 -Package $env:RELEASE_ZIP
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw 'Release installer missing.' }
+          "setup=$setup" >> $env:GITHUB_OUTPUT
+          ./tests/installer/test-installer.ps1 -Installer $setup
+
+      - name: Keep package and validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-build-${{ github.run_number }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.installer.outputs.setup }}
+            build/packages/*.build-info.json
+            build/packages/*.manifest.json
+            build/packages/*-setup.exe.json
+            build/ci-validation.log
+            build/native/validation.json
+            build/native/version.json
+            build/native/*.imports.txt
+            build/native/native-dependencies.txt
+            build/installer/**/compiler.log
+            build/installer-tests/**/*.log
+            build/installer-tests/**/result.json
+
+      - name: Keep checked release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-${{ github.run_number }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ${{ steps.package.outputs.zip }}
+            ${{ steps.installer.outputs.setup }}
+            build/packages/*.build-info.json
+            build/packages/*-setup.exe.json
+            build/native/validation.json
+            build/native/taxi-cam.exe
+            build/native/taxi-camera-bridge.dll
+
+      - name: Ready for release approval
+        id: candidate_info
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          $artifact = "windows-release-$env:BUILD_NUMBER-attempt-$env:BUILD_ATTEMPT"
+          "artifact_name=$artifact" >> $env:GITHUB_OUTPUT
+          "Download $artifact from this run and test the installer in packages/." >> $env:GITHUB_STEP_SUMMARY
+          "When ready, select Review deployments on this run, select release, then Approve and deploy. The Publish release job will publish these exact files." >> $env:GITHUB_STEP_SUMMARY
+
+  publish:
+    # Only this approval-gated job creates vX.Y.Z-build.N on the main commit.
+    name: Publish release
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: release
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out the exact built commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Download and publish approved artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_RUN_ID: ${{ github.run_id }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          RELEASE_ARTIFACT: ${{ needs.build.outputs.artifact_name }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_ARTIFACT)) { throw 'Build did not provide a release candidate.' }
+          & gh run download $env:BUILD_RUN_ID --repo $env:GH_REPO --name $env:RELEASE_ARTIFACT --dir build
+          if ($LASTEXITCODE -ne 0) { throw 'Release candidate missing or expired. Build and check a new candidate.' }
+          $packages = @(Get-ChildItem build/packages -Filter '*.zip' -File)
+          $installers = @(Get-ChildItem build/packages -Filter '*-setup.exe' -File)
+          if ($packages.Count -ne 1 -or $installers.Count -ne 1) { throw 'Expected exactly one package and installer.' }
+          ./ci/publish-release.ps1 -Package $packages[0].FullName -Installer $installers[0].FullName -Repository $env:GH_REPO -Commit $env:SOURCE_COMMIT -BuildNumber $env:BUILD_NUMBER -BuildRunId $env:BUILD_RUN_ID

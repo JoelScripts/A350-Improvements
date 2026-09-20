@@ -1,0 +1,14 @@
+{
+  "inno-setup": {
+    "version": "6.5.4",
+    "url": "https://github.com/jrsoftware/issrc/releases/download/is-6_5_4/innosetup-6.5.4.exe",
+    "sha256": "fa73bf47a4da250d185d07561c2bfda387e5e20db77e4570004cf6a133cc10b1",
+    "directory": "inno-setup/6.5.4"
+  },
+  "llvm-mingw": {
+    "version": "20260908 / LLVM 23.1.1",
+    "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260908/llvm-mingw-20260908-ucrt-x86_64.zip",
+    "sha256": "1bcf74d06b724aeecaa6412ca85f5b26fb1da770e7cdcefa9263c9c5c3ad34b6",
+    "directory": "llvm-mingw/llvm-mingw-20260908-ucrt-x86_64"
+  }
+}
