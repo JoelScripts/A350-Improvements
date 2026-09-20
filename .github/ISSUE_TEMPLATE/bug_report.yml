@@ -17,41 +17,6 @@ body:
 
         **Please search the existing issues before submitting a new report.**
 
-        ---
-
-        ## 📋 IMPORTANT — Diagnostic log required
-
-        **Please include your TaxiCam diagnostic log with this report.**
-
-        The easiest way to find it is:
-
-        1. Open **TaxiCam-Fixed**.
-        2. Open **Diagnostics**.
-        3. Click **Open log folder**.
-        4. Attach the relevant log file to the **TaxiCam diagnostic information** box below by dragging and dropping it there.
-
-        You can also open the folder manually by pasting this into Windows File Explorer:
-
-        `%LOCALAPPDATA%\Taxi Cam`
-
-        Depending on the TaxiCam-Fixed build, you may also see:
-
-        `%LOCALAPPDATA%\TaxiCam-Fixed`
-
-        Look for files such as:
-
-        - `diagnostics-summary.txt` — **start here; easiest file to read**
-        - `advanced-diagnostics.log` — human-readable detailed event log
-        - `advanced-diagnostics.jsonl` — detailed machine-readable diagnostics
-        - `diagnostics.log` — diagnostic session log
-        - `bridge.log` — MSFS graphics bridge log
-
-        **If TaxiCam-Fixed crashed or MSFS froze, please attach the log covering the time of the incident.**
-
-        If you cannot find the log, say so in the diagnostic field rather than submitting an empty report.
-
-        **Please remove/redact any personal information before attaching logs.**
-
   - type: checkboxes
     id: existing-issues
     attributes:
@@ -218,7 +183,7 @@ body:
     attributes:
       label: TaxiCam-Fixed version
       description: Enter the version shown by TaxiCam-Fixed.
-      placeholder: "Example: 0.9.30"
+      placeholder: "Example: 0.9.45"
     validations:
       required: true
 
@@ -276,57 +241,46 @@ body:
     validations:
       required: false
 
-  - type: textarea
-    id: diagnostics
+  - type: markdown
     attributes:
-      label: 📋 TaxiCam diagnostic log — REQUIRED
-      description: |
-        Please attach your diagnostic log here by dragging and dropping the file into this box.
+      value: |
+        ## 📋 TaxiCam diagnostic log — REQUIRED
 
-        Find it in TaxiCam-Fixed → Diagnostics → Open log folder.
+        **You must attach the TaxiCam diagnostic log generated during the same session as the problem.**
 
-        The folder is normally:
-        %LOCALAPPDATA%\Taxi Cam
+        In TaxiCam-Fixed, open **Diagnostics → Open log folder**.
 
-        Depending on the build, also check:
-        %LOCALAPPDATA%\TaxiCam-Fixed
+        Please attach the relevant log file(s) by **dragging and dropping them into the field below** or using GitHub's attachment control.
 
-        Prefer attaching diagnostics-summary.txt first. If available, also attach advanced-diagnostics.log, advanced-diagnostics.jsonl, diagnostics.log and/or bridge.log.
+        Preferred files:
+        - `diagnostics-summary.txt`
+        - `advanced-diagnostics.log`
+        - `advanced-diagnostics.jsonl`
+        - `advanced-state.txt`
 
-        For crashes or freezes, attach the log from the same session in which the problem occurred.
+        For crashes or freezes, please attach the logs from the session in which the problem occurred.
 
-        If you genuinely cannot find a log, write "LOG NOT FOUND" and explain what you checked.
-      placeholder: |
-        Drag and drop the diagnostic log file here.
+        **Do not paste the log contents into the field. Attach the actual file(s).**
 
-        Or paste the relevant section of the log below.
-
-        IMPORTANT:
-        - Include the time the problem occurred if possible.
-        - Do not remove the surrounding error/warning/recovery entries.
-        - Redact personal information if any is present.
-      render: text
-    validations:
-      required: true
-
-  - type: checkboxes
-    id: diagnostic-check
-    attributes:
-      label: Diagnostic log confirmation
-      description: This helps make sure the report contains the information needed for investigation.
-      options:
-        - label: I have attached or pasted the TaxiCam diagnostic information, or I have explained why the log could not be provided.
-          required: true
-    validations:
-      required: true
+        If you cannot find the logs, explain why in the field instead of submitting an empty report.
 
   - type: textarea
-    id: attachments
+    id: diagnostic-log
     attributes:
-      label: Screenshots, videos, crash evidence, or other files
-      description: Drag and drop additional screenshots, videos, crash evidence files, or other relevant files here.
+      label: TaxiCam diagnostic log — REQUIRED
+      description: Attach the actual TaxiCam diagnostic log file(s) here. Do not paste the log contents.
       placeholder: |
-        Drag and drop additional files here, if available.
+        Drag and drop your TaxiCam log file(s) here.
+
+        Required for bug reports:
+        diagnostics-summary.txt
+        advanced-diagnostics.log
+        advanced-diagnostics.jsonl
+        advanced-state.txt
+
+        If the files cannot be found, explain why here.
+    validations:
+      required: true
 
   - type: textarea
     id: additional-information
