@@ -1,6 +1,6 @@
-name: TaxiCam-Fixed bug report
-description: Report a freeze, crash, graphics, camera, or startup problem.
-title: "[Bug]: "
+name: "🐞 AeroDeck Ground View report"
+description: Report a freeze, crash, graphics, camera, display, or startup problem.
+title: "[🐞 Bug]: "
 labels:
   - bug
 
@@ -8,7 +8,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping us investigate TaxiCam-Fixed problems.
+        Thanks for helping us improve AeroDeck Ground View.
 
         If you are comparing test runs, attach a separate ZIP for each run and include its test number and local time in the filename. You can still submit a report if you cannot collect logs; explain why in the evidence notes.
 
@@ -17,7 +17,7 @@ body:
   - type: checkboxes
     id: existing-issue
     attributes:
-      label: Before you submit
+      label: "🔎 Before you submit"
       options:
         - label: I searched for the same or a similar issue.
           required: true
@@ -32,7 +32,7 @@ body:
         - MSFS froze but recovered
         - MSFS froze and stayed unresponsive
         - MSFS closed or crashed
-        - TaxiCam-Fixed closed or crashed
+        - AeroDeck Ground View closed or crashed
         - PFD or camera display problem
         - TAXI button or activation problem
         - Startup or connection problem
@@ -53,7 +53,7 @@ body:
         - Changing the MSFS camera view
         - Using ChasePlane or other camera software
         - Loading or reloading a flight
-        - Starting TaxiCam-Fixed or MSFS
+        - Starting AeroDeck Ground View or MSFS
         - Normal operation
         - Other
         - Not sure
@@ -63,7 +63,7 @@ body:
   - type: dropdown
     id: screenshot-method
     attributes:
-      label: Which screenshot or capture method did you use?
+      label: "🖼️ Which screenshot or capture method did you use?"
       description: Choose “Not applicable” if the issue did not involve a screenshot or recording.
       options:
         - Steam F12
@@ -80,7 +80,7 @@ body:
   - type: input
     id: incident-time
     attributes:
-      label: When did it happen? Include your time zone
+      label: "🕒 When did it happen? Include your time zone"
       description: An approximate time is useful. Please include the date and local time zone, for example “23 Sep 2026, 21:30 BST”.
       placeholder: Date, local time, and time zone
     validations:
@@ -89,7 +89,7 @@ body:
   - type: dropdown
     id: frequency
     attributes:
-      label: How often have you reproduced it?
+      label: "🔁 How often have you reproduced it?"
       options:
         - Every attempt
         - More than once, but not every time
@@ -102,7 +102,7 @@ body:
   - type: textarea
     id: what-happened
     attributes:
-      label: Describe what happened and what you expected
+      label: "💬 Describe what happened and what you expected"
       description: For a freeze, say whether the picture stopped, audio continued, controls still worked, or you had to close MSFS.
       placeholder: |
         What I saw:
@@ -114,11 +114,11 @@ body:
   - type: textarea
     id: steps
     attributes:
-      label: What were you doing immediately before it happened?
+      label: "🪜 What were you doing immediately before it happened?"
       description: List the steps if you can. If it happened once, describe the flight and the action just before the problem.
       placeholder: |
         1. Start MSFS and load the aircraft...
-        2. Start TaxiCam-Fixed...
+        2. Start AeroDeck Ground View...
         3. Take a screenshot or do the action...
         4. Describe what happened...
     validations:
@@ -130,7 +130,7 @@ body:
       label: What was affected? Select all that apply
       options:
         - label: MSFS simulator
-        - label: TaxiCam-Fixed
+        - label: AeroDeck Ground View
         - label: Nose camera
         - label: Tail camera
         - label: Left PFD
@@ -139,11 +139,11 @@ body:
         - label: External or ChasePlane camera
 
   - type: input
-    id: taxicam-version
+    id: aerodeck-version
     attributes:
-      label: TaxiCam-Fixed version
+      label: AeroDeck Ground View version
       description: If it did not start, enter “Could not start”.
-      placeholder: Version shown in TaxiCam-Fixed
+      placeholder: Version shown in AeroDeck Ground View
     validations:
       required: true
 
@@ -210,15 +210,15 @@ body:
     id: recent-changes
     attributes:
       label: Recent updates or changes, if any
-      description: Mention updates to MSFS, TaxiCam-Fixed, Windows, graphics drivers, or other camera and overlay tools.
+      description: Mention updates to MSFS, AeroDeck Ground View, Windows, graphics drivers, or other camera and overlay tools.
       placeholder: Leave blank if nothing changed or you are not sure.
 
   - type: markdown
     attributes:
       value: |
-        ## Logs and other evidence
+        ## 📎 Logs and other evidence
 
-        In TaxiCam-Fixed, open **Diagnostics → Open log folder**. For controlled comparisons, attach each test run as its own ZIP and name it with the test number and time, such as `test-01-2026-09-23-2130.zip` and `test-02-2026-09-23-2140.zip`.
+        In AeroDeck Ground View, open **Diagnostics → Open log folder**. For controlled comparisons, attach each test run as its own ZIP and name it with the test number and time, such as `test-01-2026-09-23-2130.zip` and `test-02-2026-09-23-2140.zip`.
 
         Include the available files from the same test session:
 
@@ -233,7 +233,7 @@ body:
   - type: upload
     id: evidence-files
     attributes:
-      label: Attach log ZIPs, logs, screenshots, or video
+      label: "📁 Attach log ZIPs, logs, screenshots, or video"
       description: Attach separate ZIPs for separate test attempts when possible. ZIP Windows `.evtx` files before attaching them.
     validations:
       required: false
@@ -241,7 +241,7 @@ body:
   - type: textarea
     id: evidence-notes
     attributes:
-      label: Evidence notes
+      label: "📝 Evidence notes"
       description: If you could not attach logs, say which files were missing and why. You can also identify what each ZIP contains.
       placeholder: |
         Test 1 ZIP:
